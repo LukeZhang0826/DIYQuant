@@ -68,6 +68,13 @@ data/                # local parquet store (gitignored)
   data dir; scoped IAM user, aws CLI only, no AWS MCP unless ops become frequent),
   Discord heartbeat/alerts, live paper track record.
 
+## Communication
+
+The owner is new to quantitative finance and git. When reporting results or explaining
+decisions, define jargon in plain English on first use (bar, bps, backtest, drawdown,
+buy-hold, commit, etc.) and explain *why* a step matters, not just what happened.
+Assume no prior trading knowledge; do not assume familiarity with git workflows.
+
 ## Conventions
 
 - Python >= 3.11, src layout, hatchling build. Install: `pip install -e ".[dev]"`
