@@ -1,25 +1,24 @@
 """Print recent headlines and their FinBERT sentiment for the configured universe.
 
 Diagnostic only, no trading. Usage: python scripts/score_news.py
-First run downloads the FinBERT model (~420 MB).
+First run downloads the FinBERT model (~420 MB). No API keys needed.
 """
 
 from datetime import datetime, timedelta, timezone
 
-from diyquant.config import get_secrets, get_settings
-from diyquant.data.providers.alpaca_news import AlpacaNewsProvider
+from diyquant.config import get_settings
+from diyquant.data.providers.yfinance_news import YFinanceNewsProvider
 from diyquant.signals.sentiment.filter import ScoredHeadline, aggregate_sentiment
 from diyquant.signals.sentiment.finbert import FinbertScorer
 
 
 def main() -> None:
     settings = get_settings()
-    secrets = get_secrets()
     cfg = settings.sentiment
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=cfg.lookback_hours)
 
-    provider = AlpacaNewsProvider(secrets.alpaca_api_key, secrets.alpaca_secret_key)
+    provider = YFinanceNewsProvider()
     scorer = FinbertScorer()
 
     for ticker in settings.universe["tickers"]:

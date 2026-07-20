@@ -52,7 +52,7 @@ src/diyquant/
   signals/           # base protocol; technical/ (SMA crossover); sentiment/ (Phase 2)
   backtest/          # vectorized engine with costs
   risk/              # limits.py (kill-switch), sizing.py        [Phase 2]
-  execution/         # broker interface, alpaca paper adapter    [Phase 2]
+  execution/         # broker interface, simulated paper broker, ledger  [Phase 2]
   alerts/            # discord webhook heartbeat                 [Phase 3]
 scripts/             # backfill.py, run_backtest.py
 data/                # local parquet store (gitignored)
@@ -63,7 +63,10 @@ data/                # local parquet store (gitignored)
 - **Phase 1 (current):** data layer + vectorized backtester + SMA crossover, end-to-end
   locally. Success = backtest runs with costs included, zero unhandled exceptions.
 - **Phase 2:** FinBERT sentiment filter (with article-age decay + source whitelist),
-  risk module, Alpaca paper-trading execution.
+  risk module, paper execution via the built-in simulated broker (fills at real
+  next-day opens). Owner is a Canadian resident: Alpaca accounts (even paper signup)
+  are unavailable, so the Alpaca adapter exists but is unused; the real-money broker
+  at the far-future live milestone will be IBKR Canada, in a non-registered account.
 - **Phase 3:** AWS deployment (single EC2 t4g.micro, cron-driven; S3 nightly backup of
   data dir; scoped IAM user, aws CLI only, no AWS MCP unless ops become frequent),
   Discord heartbeat/alerts, live paper track record.

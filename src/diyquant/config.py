@@ -48,6 +48,8 @@ class RiskConfig(BaseModel):
 class ExecutionConfig(BaseModel):
     broker: str
     ledger_path: str
+    sim_db_path: str = "data/sim_broker.sqlite"
+    starting_cash: float = 100_000.0
 
 
 class SentimentConfig(BaseModel):

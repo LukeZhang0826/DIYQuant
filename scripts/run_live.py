@@ -1,27 +1,51 @@
 """One daily paper-trading cycle. Schedule after market close (orders fill next open).
 
 Usage: python scripts/run_live.py
-Requires ALPACA_API_KEY / ALPACA_SECRET_KEY in .env (paper account).
+The default simulated broker needs no keys. broker: alpaca_paper needs
+ALPACA_API_KEY / ALPACA_SECRET_KEY in .env.
 """
 
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
+
 from diyquant.config import PROJECT_ROOT, Settings, get_secrets, get_settings
 from diyquant.data.providers.yfinance_provider import YFinanceProvider
-from diyquant.execution.alpaca_broker import AlpacaBroker
+from diyquant.execution.base import Broker
 from diyquant.execution.ledger import Ledger
 from diyquant.execution.pipeline import run_once
 from diyquant.signals.sentiment.filter import ScoredHeadline, aggregate_sentiment
 from diyquant.signals.technical.sma_crossover import SmaCrossover
 
 
-def fetch_sentiment_scores(settings: Settings, secrets) -> dict[str, float | None]:
+def make_broker(settings: Settings, bars_by_symbol: dict[str, pd.DataFrame]) -> Broker:
+    if settings.execution.broker == "simulated":
+        from diyquant.execution.sim_broker import SimulatedBroker
+
+        return SimulatedBroker(
+            PROJECT_ROOT / settings.execution.sim_db_path,
+            bars_by_symbol,
+            cost_bps=settings.backtest.cost_bps,
+            slippage_bps=settings.backtest.slippage_bps,
+            starting_cash=settings.execution.starting_cash,
+        )
+    if settings.execution.broker == "alpaca_paper":
+        from diyquant.execution.alpaca_broker import AlpacaBroker
+
+        secrets = get_secrets()
+        return AlpacaBroker(
+            secrets.alpaca_api_key, secrets.alpaca_secret_key, paper=secrets.alpaca_paper
+        )
+    raise ValueError(f"unknown broker: {settings.execution.broker}")
+
+
+def fetch_sentiment_scores(settings: Settings) -> dict[str, float | None]:
     """Score recent whitelisted news per ticker; None entries mean 'no signal'.
 
     A news/model failure must not strand the whole cycle: fall back to
     ungated (score None) and say so on stdout.
     """
-    from diyquant.data.providers.alpaca_news import AlpacaNewsProvider
+    from diyquant.data.providers.yfinance_news import YFinanceNewsProvider
     from diyquant.signals.sentiment.finbert import FinbertScorer
 
     cfg = settings.sentiment
@@ -29,7 +53,7 @@ def fetch_sentiment_scores(settings: Settings, secrets) -> dict[str, float | Non
     start = now - timedelta(hours=cfg.lookback_hours)
     scores: dict[str, float | None] = {}
     try:
-        provider = AlpacaNewsProvider(secrets.alpaca_api_key, secrets.alpaca_secret_key)
+        provider = YFinanceNewsProvider()
         scorer = FinbertScorer()
         for ticker in settings.universe["tickers"]:
             items = provider.fetch_news(ticker, start)
@@ -47,23 +71,20 @@ def fetch_sentiment_scores(settings: Settings, secrets) -> dict[str, float | Non
 
 def main() -> None:
     settings = get_settings()
-    secrets = get_secrets()
 
-    broker = AlpacaBroker(
-        secrets.alpaca_api_key, secrets.alpaca_secret_key, paper=secrets.alpaca_paper
-    )
-    ledger = Ledger(PROJECT_ROOT / settings.execution.ledger_path)
     provider = YFinanceProvider()
-    strategy = SmaCrossover(**settings.strategy.params)
-
     bars_by_symbol = {
         ticker: provider.fetch_daily_bars(ticker, settings.data.start)
         for ticker in settings.universe["tickers"]
     }
 
+    broker = make_broker(settings, bars_by_symbol)
+    ledger = Ledger(PROJECT_ROOT / settings.execution.ledger_path)
+    strategy = SmaCrossover(**settings.strategy.params)
+
     sentiment_scores = None
     if settings.sentiment.enabled:
-        sentiment_scores = fetch_sentiment_scores(settings, secrets)
+        sentiment_scores = fetch_sentiment_scores(settings)
 
     report = run_once(
         broker=broker,

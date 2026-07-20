@@ -19,15 +19,19 @@ backtest:
   slippage_bps: 2
 
 execution:
-  broker: alpaca_paper         # only paper is implemented; live is intentionally absent
+  broker: simulated            # simulated | alpaca_paper (Alpaca unavailable to Canadians)
   ledger_path: data/ledger.sqlite
+  sim_db_path: data/sim_broker.sqlite
+  starting_cash: 100000        # simulated paper account starting balance
 
 sentiment:                     # Phase 2c: FinBERT gate over the base signal
-  enabled: false               # flip on once the model has downloaded and keys are set
+  enabled: true                # keyless via yfinance news; degrades to ungated on failure
   lookback_hours: 48
   half_life_hours: 24          # a headline's vote halves every 24h
   gate_threshold: 0.2          # veto long entry below -0.2, short entry above +0.2
-  sources: ["benzinga"]        # Alpaca's news feed source whitelist
+  sources:                     # yfinance publisher whitelist (case-insensitive)
+    ["reuters", "bloomberg", "barron's", "marketwatch", "cnbc",
+     "yahoo finance", "thestreet", "benzinga", "investor's business daily"]
 
 risk:                          # enforced in Phase 2 live pipeline; documented now
   max_daily_drawdown_pct: 3.0
