@@ -1,0 +1,24 @@
+# Secrets — never commit
+.env
+
+# Claude Code local settings — per-machine, never commit
+.claude/settings.local.json
+
+# Data — local parquet store at repo root, never commit
+# (anchored so src/diyquant/data/ stays tracked)
+/data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Notebooks: strip outputs before committing
+notebooks/*.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

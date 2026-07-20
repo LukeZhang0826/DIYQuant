@@ -1,0 +1,23 @@
+# Strategy and pipeline parameters. No secrets here — secrets live in .env.
+
+universe:
+  tickers: ["AAPL", "MSFT", "NVDA", "SPY"]
+
+data:
+  provider: yfinance          # yfinance | alpaca (Phase 2)
+  store_path: data/bars       # parquet, gitignored
+  start: "2018-01-01"
+
+strategy:
+  name: sma_crossover
+  params:
+    fast: 20
+    slow: 50
+
+backtest:
+  cost_bps: 5                 # per-side transaction cost, basis points
+  slippage_bps: 2
+
+risk:                          # enforced in Phase 2 live pipeline; documented now
+  max_daily_drawdown_pct: 3.0
+  max_position_pct: 20.0
