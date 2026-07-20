@@ -18,6 +18,10 @@ backtest:
   cost_bps: 5                 # per-side transaction cost, basis points
   slippage_bps: 2
 
+execution:
+  broker: alpaca_paper         # only paper is implemented; live is intentionally absent
+  ledger_path: data/ledger.sqlite
+
 risk:                          # enforced in Phase 2 live pipeline; documented now
   max_daily_drawdown_pct: 3.0
   max_position_pct: 20.0

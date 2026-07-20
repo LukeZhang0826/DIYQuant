@@ -45,11 +45,17 @@ class RiskConfig(BaseModel):
     max_position_pct: float
 
 
+class ExecutionConfig(BaseModel):
+    broker: str
+    ledger_path: str
+
+
 class Settings(BaseModel):
     universe: dict
     data: DataConfig
     strategy: StrategyConfig
     backtest: BacktestConfig
+    execution: ExecutionConfig
     risk: RiskConfig
 
 

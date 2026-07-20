@@ -10,6 +10,7 @@ dependencies = [
     "pyarrow>=16.0",
     "pydantic-settings>=2.4",
     "PyYAML>=6.0",
+    "alpaca-py>=0.30",
 ]
 
 [project.optional-dependencies]
