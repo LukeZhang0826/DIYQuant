@@ -47,6 +47,13 @@ def make_settings() -> Settings:
         strategy={"name": "sma_crossover", "params": {"fast": 20, "slow": 50}},
         backtest={"cost_bps": 5, "slippage_bps": 2},
         execution={"broker": "alpaca_paper", "ledger_path": "data/ledger.sqlite"},
+        sentiment={
+            "enabled": False,
+            "lookback_hours": 48,
+            "half_life_hours": 24,
+            "gate_threshold": 0.2,
+            "sources": ["benzinga"],
+        },
         risk={"max_daily_drawdown_pct": 3.0, "max_position_pct": 20.0},
     )
 
@@ -60,6 +67,23 @@ def run(broker, ledger, target=1, price=100.0):
         strategy_name="constant",
         settings=make_settings(),
     )
+
+
+def test_negative_sentiment_gates_long_entry(tmp_path):
+    broker = FakeBroker(equity=10_000)
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    report = run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol={"AAPL": make_bars(100.0)},
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+        sentiment_scores={"AAPL": -0.8},
+    )
+    assert broker.submitted == []
+    assert report.orders_submitted == 0
+    assert any("long gated" in note for note in report.notes)
 
 
 def test_long_signal_buys_to_cap(tmp_path):

@@ -50,12 +50,21 @@ class ExecutionConfig(BaseModel):
     ledger_path: str
 
 
+class SentimentConfig(BaseModel):
+    enabled: bool
+    lookback_hours: int
+    half_life_hours: float
+    gate_threshold: float
+    sources: list[str]
+
+
 class Settings(BaseModel):
     universe: dict
     data: DataConfig
     strategy: StrategyConfig
     backtest: BacktestConfig
     execution: ExecutionConfig
+    sentiment: SentimentConfig
     risk: RiskConfig
 
 

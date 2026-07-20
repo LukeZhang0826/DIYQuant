@@ -11,6 +11,8 @@ dependencies = [
     "pydantic-settings>=2.4",
     "PyYAML>=6.0",
     "alpaca-py>=0.30",
+    "transformers>=4.40",
+    "torch>=2.2",
 ]
 
 [project.optional-dependencies]

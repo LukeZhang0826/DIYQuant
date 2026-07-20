@@ -22,6 +22,7 @@ from diyquant.execution.ledger import Ledger
 from diyquant.risk.limits import check_daily_drawdown, check_position_cap
 from diyquant.risk.sizing import target_shares
 from diyquant.signals.base import Signal
+from diyquant.signals.sentiment.filter import apply_sentiment_gate
 
 
 @dataclass
@@ -89,6 +90,7 @@ def run_once(
     strategy: Signal,
     strategy_name: str,
     settings: Settings,
+    sentiment_scores: dict[str, float | None] | None = None,
 ) -> CycleReport:
     report = CycleReport()
     risk_cfg = settings.risk
@@ -121,6 +123,14 @@ def run_once(
     for symbol, bars in bars_by_symbol.items():
         signal = strategy.generate(bars)
         target = int(signal.iloc[-1])
+        if sentiment_scores is not None:
+            target, gate_reason = apply_sentiment_gate(
+                target,
+                sentiment_scores.get(symbol),
+                settings.sentiment.gate_threshold,
+            )
+            if gate_reason:
+                report.notes.append(f"{symbol}: {gate_reason}")
         price = float(bars["close"].iloc[-1])
         shares = target_shares(
             target=target,

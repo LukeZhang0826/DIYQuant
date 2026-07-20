@@ -22,6 +22,13 @@ execution:
   broker: alpaca_paper         # only paper is implemented; live is intentionally absent
   ledger_path: data/ledger.sqlite
 
+sentiment:                     # Phase 2c: FinBERT gate over the base signal
+  enabled: false               # flip on once the model has downloaded and keys are set
+  lookback_hours: 48
+  half_life_hours: 24          # a headline's vote halves every 24h
+  gate_threshold: 0.2          # veto long entry below -0.2, short entry above +0.2
+  sources: ["benzinga"]        # Alpaca's news feed source whitelist
+
 risk:                          # enforced in Phase 2 live pipeline; documented now
   max_daily_drawdown_pct: 3.0
   max_position_pct: 20.0
