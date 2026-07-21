@@ -61,6 +61,11 @@ class SentimentConfig(BaseModel):
     sources: list[str]
 
 
+class AlertsConfig(BaseModel):
+    enabled: bool = True
+    timeout_seconds: float = 10.0
+
+
 class Settings(BaseModel):
     universe: dict
     data: DataConfig
@@ -69,6 +74,7 @@ class Settings(BaseModel):
     execution: ExecutionConfig
     sentiment: SentimentConfig
     risk: RiskConfig
+    alerts: AlertsConfig = AlertsConfig()
 
 
 @lru_cache

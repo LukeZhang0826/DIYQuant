@@ -33,6 +33,14 @@ sentiment:                     # Phase 2c: FinBERT gate over the base signal
     ["reuters", "bloomberg", "barron's", "marketwatch", "cnbc",
      "yahoo finance", "thestreet", "benzinga", "investor's business daily"]
 
+alerts:                        # Phase 3: heartbeat so an unattended cron run is observable
+  enabled: true                # needs DISCORD_WEBHOOK_URL in .env; no-op without it
+  timeout_seconds: 10          # a hung webhook must not wedge the daily job
+
+alerts:                        # Phase 3: heartbeat so an unattended cron run is observable
+  enabled: true                # needs DISCORD_WEBHOOK_URL in .env; no-op without it
+  timeout_seconds: 10          # a hung webhook must not wedge the daily job
+
 risk:                          # enforced in Phase 2 live pipeline; documented now
   max_daily_drawdown_pct: 3.0
   max_position_pct: 20.0

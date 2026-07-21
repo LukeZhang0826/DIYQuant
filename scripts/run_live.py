@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
+from diyquant.alerts.discord import DiscordNotifier, format_cycle_alert
 from diyquant.config import PROJECT_ROOT, Settings, get_secrets, get_settings
 from diyquant.data.providers.yfinance_provider import YFinanceProvider
 from diyquant.execution.base import Broker
@@ -97,6 +98,15 @@ def main() -> None:
     )
     ledger.close()
     print(report.summary())
+
+    # Last step on purpose: the cycle is already durably recorded, so a failed
+    # alert costs visibility, never state.
+    if settings.alerts.enabled:
+        notifier = DiscordNotifier(
+            get_secrets().discord_webhook_url,
+            timeout_seconds=settings.alerts.timeout_seconds,
+        )
+        notifier.send(format_cycle_alert(report, settings.strategy.name))
 
 
 if __name__ == "__main__":
