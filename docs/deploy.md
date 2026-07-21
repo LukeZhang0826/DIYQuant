@@ -160,9 +160,12 @@ Then `crontab -e`, and:
 ```cron
 MAILTO=""
 DIYQUANT_BACKUP_BUCKET=your-bucket-name
+HEALTHCHECK_URL=https://hc-ping.com/your-uuid-here
 
 # Trading cycle: 23:00 UTC = 19:00 ET, well after the 16:00 ET close.
-0 23 * * 1-5 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/run_live.py >> /home/ec2-user/diyquant-cron.log 2>&1
+# The && before curl is load-bearing: the ping fires only on exit 0, so a
+# crashed cycle stays silent and trips the dead-man's switch. See Step 6.
+0 23 * * 1-5 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/run_live.py >> /home/ec2-user/diyquant-cron.log 2>&1 && curl -fsS --retry 3 --max-time 20 "$HEALTHCHECK_URL" >> /home/ec2-user/diyquant-cron.log 2>&1
 
 # Backup, 30 minutes later so it captures the cycle that just ran.
 30 23 * * 1-5 /home/ec2-user/DIYQuant/deploy/backup.sh >> /home/ec2-user/diyquant-cron.log 2>&1
@@ -180,6 +183,53 @@ Notes on the schedule:
   a long weekend but still treats a real multi-day outage as an outage rather
   than as one very bad trading day.
 
+## Step 6: Dead-man's switch
+
+Everything above alerts you when something **happens**. Nothing yet alerts you
+when nothing happens. That gap is the important one: if the instance is stopped,
+`crond` dies, the disk fills, or AWS retires the host, no code of ours runs, so
+no code of ours can complain. The system fails by going quiet, and "a silent day
+is the alarm" only works if a human reliably notices silence. People do not,
+especially by week six.
+
+A dead-man's switch inverts the logic. Something **outside** the box expects a
+check-in on a schedule and shouts when one fails to arrive. It has to be
+external: monitoring that runs on the machine it monitors cannot report that
+machine's death.
+
+[healthchecks.io](https://healthchecks.io) does this, and its free tier is
+ample for one daily job.
+
+1. Create a check named `diyquant-daily`.
+2. Set **period** to 1 day and **grace** to 2 hours. The cycle runs at 23:00
+   UTC, so a missed ping raises an alert around 01:00 UTC.
+3. Set the schedule to weekdays only, matching cron: `0 23 * * 1-5`. Without
+   this it will page you every Saturday.
+4. Add a **Discord integration** pointing at the same webhook the pipeline uses,
+   so failures and heartbeats land in one channel.
+5. Copy the ping URL into `HEALTHCHECK_URL` in your crontab (Step 5).
+
+Why the ping hangs off `&&` rather than living in `run_live.py`: the shell
+already gives us exactly the semantics we want for free. `&&` fires the ping
+only when the cycle exits 0, so a crash, an OOM kill, or a Python traceback all
+result in no ping and therefore an alert. Putting it inside the Python would
+mean the ping shares a process with the thing it is supposed to be reporting on,
+which is precisely the arrangement to avoid.
+
+Test it deliberately, in both directions:
+
+```bash
+curl -fsS "$HEALTHCHECK_URL"          # check goes green
+```
+
+Then leave it alone past the grace window and confirm the alert actually
+arrives. **An untested alarm is not an alarm**, and this one has exactly one job
+that only matters on the day everything else has already failed.
+
+Note what this does *not* cover: a cycle that runs fine but makes bad decisions.
+The switch proves the pipeline is alive, not that it is right. The Discord
+heartbeat and the kill-switch cover that side.
+
 ## Verifying it actually works
 
 The first Discord heartbeat after 23:00 UTC on the next trading day is the real
@@ -192,7 +242,8 @@ aws s3 ls s3://your-bucket-name/backups/
 
 **A silent day is itself the alarm.** If no Discord message arrives, something
 is wrong even though nothing reported an error. That is the failure mode this
-whole phase exists to make visible.
+whole phase exists to make visible, and once Step 6 is in place you are told
+about it rather than having to notice it.
 
 Watch memory on the first few real runs:
 
@@ -231,3 +282,5 @@ An untested backup is a guess. This turns it into a fact.
 | `drawdown check skipped` in the report | Expected after an outage longer than 120h. It is the safety behaviour, not a bug. |
 | Backup fails with `AccessDenied` | The IAM policy still says `BUCKET_NAME`, or the key belongs to a different user. |
 | Log file growing without bound | Add logrotate, or truncate it periodically. Low priority at one run per day. |
+| healthchecks.io alerts every Saturday | The check's schedule is daily; set it to `0 23 * * 1-5` to match cron. |
+| Check stays green while the cycle fails | The ping is not hanging off `&&`, so it fires regardless of exit code. Re-read the Step 5 cron line. |
