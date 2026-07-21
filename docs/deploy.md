@@ -84,9 +84,15 @@ backup an attacker can delete is not a backup.
 SSH in and run:
 
 ```bash
+sudo dnf install -y git      # AL2023 ships without git, and setup.sh lives in the repo
 git clone https://github.com/LukeZhang0826/DIYQuant.git
 ./DIYQuant/deploy/setup.sh
 ```
+
+That first line is not redundant. Amazon Linux 2023 has no `git` preinstalled,
+and `setup.sh` cannot install it for you because `setup.sh` is inside the repo
+you need `git` to fetch. Installing it by hand breaks the loop; `setup.sh`
+installs it again harmlessly.
 
 This installs packages, creates a 2 GB swapfile, sets up the virtualenv, and
 pre-downloads FinBERT. Expect several minutes, mostly torch. Re-running it is

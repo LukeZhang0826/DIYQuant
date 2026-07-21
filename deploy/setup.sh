@@ -41,6 +41,14 @@ fi
 echo "=== 4/5 virtualenv + dependencies ==="
 cd "$PROJECT_DIR"
 [ -d .venv ] || python3.11 -m venv .venv
+
+# pip stages downloads and unpacks wheels under TMPDIR. On AL2023 /tmp is a
+# ~900 MB tmpfs, which torch overruns, and because tmpfs is RAM-backed filling
+# it also consumes the memory FinBERT needs. Stage on disk instead: / has room.
+export TMPDIR="$HOME/.cache/diyquant-pip-tmp"
+mkdir -p "$TMPDIR"
+trap 'rm -rf "$TMPDIR"' EXIT
+
 # torch on arm64 is a large download; expect this step to take several minutes.
 ./.venv/bin/pip install --upgrade pip
 ./.venv/bin/pip install -e ".[dev]"
