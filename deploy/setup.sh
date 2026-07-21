@@ -49,8 +49,15 @@ export TMPDIR="$HOME/.cache/diyquant-pip-tmp"
 mkdir -p "$TMPDIR"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-# torch on arm64 is a large download; expect this step to take several minutes.
 ./.venv/bin/pip install --upgrade pip
+
+# Install the CPU build of torch first. PyPI's default is a CUDA build
+# (torch==X+cuNNN) that drags in ~3.5 GB of nvidia and triton packages, none of
+# which can run on a GPU-less Graviton box. Doing this before the editable
+# install means pip sees the torch requirement already satisfied and leaves it
+# alone. Expect several minutes even so: torch is the bulk of the download.
+./.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch
+
 ./.venv/bin/pip install -e ".[dev]"
 
 echo "=== 5/5 pre-download FinBERT ==="
