@@ -1,8 +1,11 @@
 import json
 import urllib.error
 
+import io
+
 from diyquant.alerts.discord import (
     MAX_CONTENT_CHARS,
+    USER_AGENT,
     DiscordNotifier,
     format_cycle_alert,
 )
@@ -93,10 +96,43 @@ def test_send_is_a_noop_without_a_webhook_url():
     assert opener.calls == []
 
 
+def test_send_identifies_itself_with_a_user_agent():
+    """urllib's default UA is 403'd by Discord's Cloudflare front before it
+    ever reaches the webhook. Observed live on 2026-07-21."""
+    notifier = DiscordNotifier(WEBHOOK, opener=(opener := FakeOpener()))
+    notifier.send("hello")
+
+    request = opener.calls[0][0]
+    assert request.headers["User-agent"] == USER_AGENT
+    assert "urllib" not in request.headers["User-agent"]
+
+
 def test_http_error_is_swallowed_so_the_cycle_survives():
     error = urllib.error.HTTPError(WEBHOOK, 429, "Too Many Requests", {}, None)
     notifier = DiscordNotifier(WEBHOOK, opener=FakeOpener(raises=error))
     assert notifier.send("hello") is False
+
+
+def test_http_error_output_includes_the_response_body(capsys):
+    """A bare status code is not diagnosable: Discord explains itself in the body."""
+    body = io.BytesIO(b'{"message": "You are being rate limited.", "code": 0}')
+    error = urllib.error.HTTPError(WEBHOOK, 429, "Too Many Requests", {}, body)
+    notifier = DiscordNotifier(WEBHOOK, opener=FakeOpener(raises=error))
+
+    assert notifier.send("hello") is False
+
+    out = capsys.readouterr().out
+    assert "HTTP 429" in out
+    assert "rate limited" in out
+
+
+def test_unreadable_error_body_still_reports_the_status(capsys):
+    """Reading diagnostics must never raise on top of the original failure."""
+    error = urllib.error.HTTPError(WEBHOOK, 500, "Server Error", {}, None)
+    notifier = DiscordNotifier(WEBHOOK, opener=FakeOpener(raises=error))
+
+    assert notifier.send("hello") is False
+    assert "HTTP 500" in capsys.readouterr().out
 
 
 def test_network_failure_is_swallowed_so_the_cycle_survives():

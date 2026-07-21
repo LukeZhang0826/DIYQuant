@@ -19,6 +19,14 @@ from diyquant.execution.pipeline import CycleReport
 MAX_CONTENT_CHARS = 2000
 _TRUNCATION_MARKER = "\n... (truncated)"
 
+# Discord requires a valid User-Agent and its Cloudflare front rejects urllib's
+# default ("Python-urllib/x.y") with a 403 before the request reaches the
+# webhook. The DiscordBot (url, version) form is what the API docs ask for.
+USER_AGENT = "DiscordBot (https://github.com/LukeZhang0826/DIYQuant, 0.1.0)"
+
+# Enough of an error body to identify the cause, not enough to flood cron logs.
+_MAX_ERROR_BODY_CHARS = 200
+
 
 def _truncate(content: str) -> str:
     """Trim to Discord's limit, keeping the head: halt status leads the message."""
@@ -68,7 +76,7 @@ class DiscordNotifier:
         request = urllib.request.Request(
             self._webhook_url,
             data=json.dumps({"content": _truncate(content)}).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
             method="POST",
         )
         try:
@@ -87,9 +95,23 @@ class DiscordNotifier:
         cron logs, so the URL is scrubbed even from messages unlikely to carry it.
         """
         if isinstance(exc, urllib.error.HTTPError):
+            # Discord explains rejections in the body; a bare status code sent us
+            # guessing once already. The body never carries the webhook token.
             detail = f"HTTP {exc.code}"
+            body = self._read_error_body(exc)
+            if body:
+                detail = f"{detail}: {body}"
         elif isinstance(exc, urllib.error.URLError):
             detail = f"{type(exc).__name__}: {exc.reason}"
         else:
             detail = type(exc).__name__
         return detail.replace(self._webhook_url, "<webhook>")
+
+    @staticmethod
+    def _read_error_body(exc: urllib.error.HTTPError) -> str:
+        """Best-effort body text. Reading it must not itself raise."""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - diagnostics are never worth an exception
+            return ""
+        return " ".join(body.split())[:_MAX_ERROR_BODY_CHARS]
