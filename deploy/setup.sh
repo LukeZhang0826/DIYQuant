@@ -13,7 +13,12 @@ PROJECT_DIR="${DIYQUANT_DIR:-$HOME/DIYQuant}"
 SWAP_GB=2
 
 echo "=== 1/5 system packages ==="
-sudo dnf install -y git python3.11 python3.11-pip sqlite awscli-2
+# cronie is not preinstalled on AL2023 and there is no crontab command without
+# it. Installing it here rather than at scheduling time matters: without cron
+# the crontab file simply has nowhere to go, and the box would sit there
+# running nothing while looking perfectly healthy.
+sudo dnf install -y git python3.11 python3.11-pip sqlite awscli-2 cronie
+sudo systemctl enable --now crond
 
 echo "=== 2/5 ${SWAP_GB}GB swapfile ==="
 # Insurance, not load-bearing: FinBERT peaks near 786 MB against this box's

@@ -147,7 +147,15 @@ you have not run by hand first.
 
 ## Step 5: Schedule it
 
-`crontab -e`, then:
+`setup.sh` installs `cronie` and enables `crond`; AL2023 has neither by default.
+Confirm before scheduling, because a missing cron daemon fails silently rather
+than loudly:
+
+```bash
+systemctl is-active crond    # must print: active
+```
+
+Then `crontab -e`, and:
 
 ```cron
 MAILTO=""
