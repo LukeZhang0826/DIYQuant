@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 
 from diyquant.config import Settings
@@ -56,6 +58,10 @@ def make_settings() -> Settings:
         },
         risk={"max_daily_drawdown_pct": 3.0, "max_position_pct": 20.0},
     )
+
+
+def hours_ago(hours: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
 
 
 def run(broker, ledger, target=1, price=100.0):
@@ -121,6 +127,32 @@ def test_kill_switch_halts_and_flattens(tmp_path):
     broker = FakeBroker(equity=9_600, positions={"AAPL": 20})
     ledger = Ledger(tmp_path / "ledger.sqlite")
     ledger.record_equity_snapshot(cash=10_000, equity=10_000)
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert report.halted
+    assert ledger.active_halt() is not None
+    assert broker.submitted == [("AAPL", -20)]
+
+
+def test_stale_baseline_skips_drawdown_check(tmp_path):
+    """After an outage the old snapshot is not a day-start reference, so do not act on it."""
+    broker = FakeBroker(equity=9_000, positions={"AAPL": 20})
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    ledger.record_equity_snapshot(cash=10_000, equity=10_000, ts=hours_ago(240))
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert not report.halted
+    assert ledger.active_halt() is None
+    assert any("drawdown check skipped" in note for note in report.notes)
+
+
+def test_weekend_gap_baseline_still_trips_kill_switch(tmp_path):
+    """A Friday-to-Monday gap is normal cadence, not an outage: the switch must still fire."""
+    broker = FakeBroker(equity=9_600, positions={"AAPL": 20})
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    ledger.record_equity_snapshot(cash=10_000, equity=10_000, ts=hours_ago(72))
 
     report = run(broker, ledger, target=1, price=100.0)
 

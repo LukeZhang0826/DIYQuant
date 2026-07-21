@@ -4,8 +4,9 @@ Order of operations each cycle:
   1. Reconcile fills for orders submitted in earlier cycles.
   2. Snapshot account equity.
   3. If a halt is active, stop here (a human must clear it).
-  4. Kill-switch: if equity dropped past the daily limit since the last
-     snapshot, halt, flatten every position, and stop.
+  4. Kill-switch: if equity dropped past the daily limit since the previous
+     snapshot, halt, flatten every position, and stop. Skipped when that
+     snapshot is too stale to stand in for the start of the trading day.
   5. Per symbol: compute the signal, size it, cap-check it, submit the delta.
 
 The broker is the source of truth for current positions; the ledger's derived
@@ -13,6 +14,7 @@ position exists to reconcile against it (Phase 3 alerting).
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -42,6 +44,10 @@ class CycleReport:
         ]
         lines += self.notes
         return "\n".join(lines)
+
+
+def _hours_since(ts: str) -> float:
+    return (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds() / 3600
 
 
 def _reconcile_fills(broker: Broker, ledger: Ledger, report: CycleReport) -> None:
@@ -98,7 +104,7 @@ def run_once(
     _reconcile_fills(broker, ledger, report)
 
     account = broker.get_account()
-    prev_equity = ledger.last_equity()
+    baseline = ledger.last_equity_snapshot()
     ledger.record_equity_snapshot(cash=account.cash, equity=account.equity)
 
     halt = ledger.active_halt()
@@ -107,18 +113,27 @@ def run_once(
         report.notes.append(f"halted since {halt['triggered_at']}: {halt['reason']}")
         return report
 
-    if prev_equity is not None:
-        decision = check_daily_drawdown(
-            day_start_equity=prev_equity,
-            current_equity=account.equity,
-            max_daily_drawdown_pct=risk_cfg.max_daily_drawdown_pct,
-        )
-        if not decision.allowed:
-            ledger.trigger_halt(decision.reason)
-            _flatten_all(broker, ledger, list(bars_by_symbol), decision.reason, report)
-            report.halted = True
-            report.notes.append(f"KILL SWITCH: {decision.reason}")
-            return report
+    if baseline is not None:
+        age_hours = _hours_since(baseline["ts"])
+        if age_hours > risk_cfg.max_baseline_age_hours:
+            # A stale baseline turns the daily check into a multi-day one, which
+            # would flatten the book on ordinary drift after any outage.
+            report.notes.append(
+                f"drawdown check skipped: baseline is {age_hours:.1f}h old, "
+                f"limit {risk_cfg.max_baseline_age_hours:.0f}h"
+            )
+        else:
+            decision = check_daily_drawdown(
+                day_start_equity=float(baseline["equity"]),
+                current_equity=account.equity,
+                max_daily_drawdown_pct=risk_cfg.max_daily_drawdown_pct,
+            )
+            if not decision.allowed:
+                ledger.trigger_halt(decision.reason)
+                _flatten_all(broker, ledger, list(bars_by_symbol), decision.reason, report)
+                report.halted = True
+                report.notes.append(f"KILL SWITCH: {decision.reason}")
+                return report
 
     for symbol, bars in bars_by_symbol.items():
         signal = strategy.generate(bars)

@@ -40,6 +40,15 @@ def test_last_equity_returns_latest_snapshot(tmp_path):
     assert ledger.last_equity() == 10_500
 
 
+def test_last_equity_snapshot_carries_timestamp(tmp_path):
+    ledger = make_ledger(tmp_path)
+    assert ledger.last_equity_snapshot() is None
+    ledger.record_equity_snapshot(cash=5_000, equity=10_000, ts="2026-07-01T00:00:00+00:00")
+    row = ledger.last_equity_snapshot()
+    assert row["equity"] == 10_000
+    assert row["ts"] == "2026-07-01T00:00:00+00:00"
+
+
 def test_halt_lifecycle(tmp_path):
     ledger = make_ledger(tmp_path)
     assert ledger.active_halt() is None

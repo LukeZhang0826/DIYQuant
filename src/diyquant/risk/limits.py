@@ -25,6 +25,10 @@ def check_daily_drawdown(
     Drawdown is measured from the account equity at the start of the trading
     day, not from an all-time high: this is a circuit breaker for "something
     is going wrong right now", not a long-horizon performance judgment.
+
+    The caller owns baseline freshness. Passing an equity figure from several
+    days ago silently widens this into a multi-day check, so the live pipeline
+    skips the call entirely once its snapshot is older than risk.max_baseline_age_hours.
     """
     if day_start_equity <= 0:
         raise ValueError(f"day_start_equity must be positive, got {day_start_equity}")

@@ -43,6 +43,7 @@ class BacktestConfig(BaseModel):
 class RiskConfig(BaseModel):
     max_daily_drawdown_pct: float
     max_position_pct: float
+    max_baseline_age_hours: float = 120.0
 
 
 class ExecutionConfig(BaseModel):

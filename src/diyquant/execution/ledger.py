@@ -129,17 +129,22 @@ class Ledger:
 
     # -- equity ------------------------------------------------------------
 
-    def record_equity_snapshot(self, cash: float, equity: float) -> None:
+    def record_equity_snapshot(self, cash: float, equity: float, ts: str | None = None) -> None:
+        """Append an equity snapshot. ts defaults to now; pass it to backfill history."""
         self._conn.execute(
             "INSERT INTO equity_snapshots (ts, cash, equity) VALUES (?,?,?)",
-            (_now(), cash, equity),
+            (ts or _now(), cash, equity),
         )
         self._conn.commit()
 
-    def last_equity(self) -> float | None:
-        row = self._conn.execute(
-            "SELECT equity FROM equity_snapshots ORDER BY id DESC LIMIT 1"
+    def last_equity_snapshot(self) -> sqlite3.Row | None:
+        """Latest snapshot with its timestamp: callers need the age, not just the number."""
+        return self._conn.execute(
+            "SELECT * FROM equity_snapshots ORDER BY id DESC LIMIT 1"
         ).fetchone()
+
+    def last_equity(self) -> float | None:
+        row = self.last_equity_snapshot()
         return float(row["equity"]) if row else None
 
     # -- halts -------------------------------------------------------------
