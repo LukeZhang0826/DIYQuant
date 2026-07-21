@@ -19,6 +19,9 @@ __pycache__/
 # Notebooks: strip outputs before committing
 notebooks/*.ipynb_checkpoints/
 
+# Generated knowledge graph — regenerable, never commit
+/graphify-out/
+
 # OS
 .DS_Store
 Thumbs.db
