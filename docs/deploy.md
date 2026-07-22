@@ -159,15 +159,24 @@ Then `crontab -e`, and:
 
 ```cron
 MAILTO=""
-DIYQUANT_BACKUP_BUCKET=your-bucket-name
+DIYQUANT_BACKUP_BUCKET=your-backup-bucket
+DIYQUANT_SITE_BUCKET=your-site-bucket
+DIYQUANT_DISTRIBUTION_ID=your-cloudfront-id
 HEALTHCHECK_URL=https://hc-ping.com/your-uuid-here
+
+# Refresh the parquet bar store first: the dashboard's ticker sparklines read
+# from it, and run_live.py streams its own bars without persisting them.
+45 22 * * 1-5 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/backfill.py >> /home/ec2-user/diyquant-cron.log 2>&1
 
 # Trading cycle: 23:00 UTC = 19:00 ET, well after the 16:00 ET close.
 # The && before curl is load-bearing: the ping fires only on exit 0, so a
 # crashed cycle stays silent and trips the dead-man's switch. See Step 6.
 0 23 * * 1-5 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/run_live.py >> /home/ec2-user/diyquant-cron.log 2>&1 && curl -fsS --retry 3 --max-time 20 "$HEALTHCHECK_URL" >> /home/ec2-user/diyquant-cron.log 2>&1
 
-# Backup, 30 minutes later so it captures the cycle that just ran.
+# Publish the public dashboard once the cycle has been recorded. See Step 7.
+10 23 * * 1-5 /home/ec2-user/DIYQuant/deploy/publish.sh >> /home/ec2-user/diyquant-cron.log 2>&1
+
+# Backup last, so it captures everything the cycle produced.
 30 23 * * 1-5 /home/ec2-user/DIYQuant/deploy/backup.sh >> /home/ec2-user/diyquant-cron.log 2>&1
 ```
 
@@ -229,6 +238,37 @@ that only matters on the day everything else has already failed.
 Note what this does *not* cover: a cycle that runs fine but makes bad decisions.
 The switch proves the pipeline is alive, not that it is right. The Discord
 heartbeat and the kill-switch cover that side.
+
+## Step 7: The public dashboard
+
+`deploy/publish.sh` regenerates `index.html` and `state.json` from the ledger
+and pushes both to a **separate** site bucket, served by CloudFront.
+
+Two properties are worth preserving if you ever change this:
+
+- **The box is push-only.** It writes outward to S3; nothing reaches in. That is
+  what lets the trading host keep an SSH-from-one-IP-only security group. An API
+  server on the box would trade that away to serve a page that changes daily.
+- **The bucket is never public.** CloudFront reads it through Origin Access
+  Control and is its only permitted reader. Confirm with:
+
+  ```bash
+  curl -o /dev/null -w "%{http_code}\n" https://YOUR-SITE-BUCKET.s3.REGION.amazonaws.com/index.html
+  # 403 is correct. 200 means the bucket is exposed.
+  ```
+
+Objects are uploaded with `max-age=300` *and* invalidated on publish. The
+invalidation makes updates near-immediate; the max-age is the backstop, so a
+skipped or failed invalidation costs minutes of staleness rather than a day.
+
+`state.json` is published alongside the page deliberately. It is the same data
+as a contract, so a frontend built later reads a file that already exists
+instead of needing a backend retrofitted behind it. `schema_version` lets that
+consumer detect a breaking change rather than silently rendering nonsense.
+
+**The page is public.** It shows positions, equity and every trade. Fine for
+paper trading and good portfolio material; revisit before real money, since
+broadcasting live positions is a different proposition.
 
 ## Verifying it actually works
 
