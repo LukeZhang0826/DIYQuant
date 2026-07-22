@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS halts (
     reason TEXT NOT NULL,
     cleared_at TEXT
 );
+CREATE TABLE IF NOT EXISTS sentiment_gates (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    raw_signal INTEGER NOT NULL,
+    score REAL,
+    gated_signal INTEGER NOT NULL,
+    vetoed INTEGER NOT NULL CHECK (vetoed IN (0, 1)),
+    reason TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -146,6 +156,47 @@ class Ledger:
     def last_equity(self) -> float | None:
         row = self.last_equity_snapshot()
         return float(row["equity"]) if row else None
+
+    # -- sentiment gate ----------------------------------------------------
+
+    def record_sentiment_gate(
+        self,
+        symbol: str,
+        raw_signal: int,
+        score: float | None,
+        gated_signal: int,
+        reason: str = "",
+    ) -> int:
+        """Record one sentiment evaluation, whether or not it vetoed anything.
+
+        Every evaluation is stored, not only the vetoes, because "does the gate
+        help?" cannot be answered from vetoes alone. That needs the base rate
+        (how often was the gate consulted) and the counterfactual (what the base
+        signal wanted before sentiment touched it), so both are kept here.
+
+        score is None when no whitelisted news was found. That is a distinct
+        case from a neutral score: silence about a stock is not the same as
+        balanced coverage of it, and conflating them would corrupt any later
+        analysis.
+        """
+        cur = self._conn.execute(
+            "INSERT INTO sentiment_gates (ts, symbol, raw_signal, score, gated_signal,"
+            " vetoed, reason) VALUES (?,?,?,?,?,?,?)",
+            (
+                _now(),
+                symbol,
+                raw_signal,
+                score,
+                gated_signal,
+                int(raw_signal != gated_signal),
+                reason,
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def sentiment_gates(self) -> list[sqlite3.Row]:
+        return self._conn.execute("SELECT * FROM sentiment_gates ORDER BY id").fetchall()
 
     # -- halts -------------------------------------------------------------
 

@@ -285,6 +285,64 @@ def fills_table(fills: list[sqlite3.Row]) -> str:
   <tbody>{rows}</tbody></table></div>"""
 
 
+def sentiment_block(gates: list[sqlite3.Row]) -> str:
+    """The gate's own track record: how often consulted, how often it acted.
+
+    The veto rate is the number that matters. A gate that never fires is
+    costing complexity for nothing; one that fires constantly is probably
+    just suppressing the base strategy rather than refining it.
+    """
+    if not gates:
+        return (
+            '<div class="empty"><strong>No evaluations recorded.</strong> '
+            "The gate logs one row per symbol per cycle whenever sentiment is "
+            "enabled, so this fills in from the next run.</div>"
+        )
+
+    vetoes = [g for g in gates if g["vetoed"]]
+    rate = len(vetoes) / len(gates) * 100
+    scored = [g for g in gates if g["score"] is not None]
+    coverage = len(scored) / len(gates) * 100
+
+    cells = []
+    for g in reversed(gates[-25:]):
+        vetoed = bool(g["vetoed"])
+        # "--" rather than 0.00 when there was no usable news: the table must
+        # not imply the model returned a neutral reading it never made.
+        score = "--" if g["score"] is None else f"{float(g['score']):+.2f}"
+        outcome = (
+            '<span class="pill pill-blocked">vetoed</span>'
+            if vetoed
+            else '<span class="muted">passed</span>'
+        )
+        cells.append(
+            f"<tr><td class='mono muted'>{esc(short_ts(g['ts']))}</td>"
+            f"<td class='sym'>{esc(g['symbol'])}</td>"
+            f"<td class='num'>{g['raw_signal']:+d}</td>"
+            f"<td class='num {'neg' if vetoed else 'muted'}'>{g['gated_signal']:+d}</td>"
+            f"<td class='num'>{esc(score)}</td>"
+            f"<td>{outcome}</td>"
+            f"<td class='muted'>{esc(g['reason'] or '')}</td></tr>"
+        )
+    rows = "".join(cells)
+
+    return f"""<div class="tiles" style="margin-bottom:12px">
+  <div class="tile"><span class="tile-label">Evaluations</span>
+    <span class="tile-value">{len(gates)}</span>
+    <span class="tile-note">one per symbol per cycle</span></div>
+  <div class="tile"><span class="tile-label">Vetoes</span>
+    <span class="tile-value">{len(vetoes)}</span>
+    <span class="tile-note">{rate:.0f}% of evaluations</span></div>
+  <div class="tile"><span class="tile-label">News coverage</span>
+    <span class="tile-value">{coverage:.0f}%</span>
+    <span class="tile-note">had usable headlines</span></div>
+</div>
+<div class="scroll"><table>
+  <thead><tr><th>Time (UTC)</th><th>Symbol</th><th class="num">Signal</th>
+  <th class="num">After gate</th><th class="num">Score</th><th>Outcome</th><th>Reason</th></tr></thead>
+  <tbody>{rows}</tbody></table></div>"""
+
+
 def positions_block(positions: dict[str, int]) -> str:
     held = {s: q for s, q in positions.items() if q}
     if not held:
@@ -501,6 +559,7 @@ def build_html(conn: sqlite3.Connection, source: Path) -> str:
     fills = conn.execute("SELECT * FROM fills ORDER BY id").fetchall()
     snapshots = conn.execute("SELECT * FROM equity_snapshots ORDER BY id").fetchall()
     halts = conn.execute("SELECT * FROM halts ORDER BY id").fetchall()
+    gates = conn.execute("SELECT * FROM sentiment_gates ORDER BY id").fetchall()
     active = next((h for h in halts if h["cleared_at"] is None), None)
 
     positions: dict[str, int] = {}
@@ -553,6 +612,12 @@ def build_html(conn: sqlite3.Connection, source: Path) -> str:
   {equity_panel(snapshots)}
   {ticker_cards()}
 
+  <div class="panel" style="{glow("sentiment")}">
+    <div class="panel-head"><h2>Sentiment gate</h2>
+      <span class="panel-note">FinBERT vetoes over the base signal</span></div>
+    {sentiment_block(gates)}
+  </div>
+
   <div class="panel" style="{glow("positions")}">
     <div class="panel-head"><h2>Positions</h2></div>
     {positions_block(positions)}
@@ -587,7 +652,7 @@ def build_state(conn: sqlite3.Connection) -> dict:
     """
     rows = {
         t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")]
-        for t in ("orders", "fills", "equity_snapshots", "halts")
+        for t in ("orders", "fills", "equity_snapshots", "halts", "sentiment_gates")
     }
     positions: dict[str, int] = {}
     for f in rows["fills"]:

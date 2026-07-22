@@ -33,6 +33,7 @@ class CycleReport:
     fills_reconciled: int = 0
     orders_submitted: int = 0
     orders_blocked: int = 0
+    gates_fired: int = 0
     notes: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -41,6 +42,7 @@ class CycleReport:
             f"fills reconciled : {self.fills_reconciled}",
             f"orders submitted : {self.orders_submitted}",
             f"orders blocked   : {self.orders_blocked}",
+            f"sentiment vetoes : {self.gates_fired}",
         ]
         lines += self.notes
         return "\n".join(lines)
@@ -139,13 +141,25 @@ def run_once(
         signal = strategy.generate(bars)
         target = int(signal.iloc[-1])
         if sentiment_scores is not None:
+            raw_target = target
+            score = sentiment_scores.get(symbol)
             target, gate_reason = apply_sentiment_gate(
                 target,
-                sentiment_scores.get(symbol),
+                score,
                 settings.sentiment.gate_threshold,
+            )
+            # Recorded every cycle, not only on a veto: a veto count with no
+            # denominator cannot tell you whether the gate is earning its place.
+            ledger.record_sentiment_gate(
+                symbol=symbol,
+                raw_signal=raw_target,
+                score=score,
+                gated_signal=target,
+                reason=gate_reason,
             )
             if gate_reason:
                 report.notes.append(f"{symbol}: {gate_reason}")
+                report.gates_fired += 1
         price = float(bars["close"].iloc[-1])
         shares = target_shares(
             target=target,

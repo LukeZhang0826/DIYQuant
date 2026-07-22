@@ -92,6 +92,68 @@ def test_negative_sentiment_gates_long_entry(tmp_path):
     assert any("long gated" in note for note in report.notes)
 
 
+def test_gate_veto_is_recorded_with_the_signal_it_overrode(tmp_path):
+    """A veto is only interpretable next to what the base signal wanted."""
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    run_once(
+        broker=FakeBroker(equity=10_000),
+        ledger=ledger,
+        bars_by_symbol={"AAPL": make_bars(100.0)},
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+        sentiment_scores={"AAPL": -0.8},
+    )
+    (row,) = ledger.sentiment_gates()
+    assert row["symbol"] == "AAPL"
+    assert row["raw_signal"] == 1
+    assert row["gated_signal"] == 0
+    assert row["vetoed"] == 1
+    assert row["score"] == -0.8
+    assert "long gated" in row["reason"]
+
+
+def test_gate_records_evaluations_it_did_not_veto(tmp_path):
+    """Without the non-vetoes there is no denominator, so no way to judge the gate."""
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    run_once(
+        broker=FakeBroker(equity=10_000),
+        ledger=ledger,
+        bars_by_symbol={"AAPL": make_bars(100.0)},
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+        sentiment_scores={"AAPL": 0.5},
+    )
+    (row,) = ledger.sentiment_gates()
+    assert row["vetoed"] == 0
+    assert row["raw_signal"] == row["gated_signal"] == 1
+    assert row["reason"] == ""
+
+
+def test_absent_news_is_recorded_as_null_not_zero(tmp_path):
+    """No news is not neutral news; conflating them would corrupt later analysis."""
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    run_once(
+        broker=FakeBroker(equity=10_000),
+        ledger=ledger,
+        bars_by_symbol={"AAPL": make_bars(100.0)},
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+        sentiment_scores={"AAPL": None},
+    )
+    (row,) = ledger.sentiment_gates()
+    assert row["score"] is None
+    assert row["vetoed"] == 0
+
+
+def test_nothing_recorded_when_sentiment_is_disabled(tmp_path):
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    run(FakeBroker(equity=10_000), ledger, target=1, price=100.0)
+    assert ledger.sentiment_gates() == []
+
+
 def test_long_signal_buys_to_cap(tmp_path):
     broker = FakeBroker(equity=10_000)
     ledger = Ledger(tmp_path / "ledger.sqlite")
