@@ -1,6 +1,14 @@
 # Secrets — never commit
 .env
 
+# Keys and certs. The repo is public: a private key committed here is
+# compromised the moment it is pushed, and bots scrape new commits within
+# minutes. Belt and braces, since these should never be in the tree at all.
+*.pem
+*.key
+*.p12
+credentials
+
 # Claude Code local settings — per-machine, never commit
 .claude/settings.local.json
 
