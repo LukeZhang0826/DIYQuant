@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import json
 import random
 import sqlite3
 import sys
@@ -35,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("ledger", nargs="?", help="path to ledger.sqlite (default: from settings)")
     p.add_argument("--out", default="report.html", help="output HTML path")
+    p.add_argument("--json-out", help="also write machine-readable state to this path")
     return p.parse_args()
 
 
@@ -574,6 +576,39 @@ def build_html(conn: sqlite3.Connection, source: Path) -> str:
 </div>"""
 
 
+def build_state(conn: sqlite3.Connection) -> dict:
+    """The same data the page renders, as JSON.
+
+    This is the contract any future frontend consumes, so it is published
+    alongside the HTML from day one: a React app built later reads a file that
+    already exists rather than requiring a backend to be retrofitted. The
+    schema_version is here so that consumer can detect a breaking change
+    instead of silently rendering nonsense.
+    """
+    rows = {
+        t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")]
+        for t in ("orders", "fills", "equity_snapshots", "halts")
+    }
+    positions: dict[str, int] = {}
+    for f in rows["fills"]:
+        positions[f["symbol"]] = positions.get(f["symbol"], 0) + (
+            f["qty"] if f["side"] == "buy" else -f["qty"]
+        )
+    snaps = rows["equity_snapshots"]
+    active = next((h for h in rows["halts"] if h["cleared_at"] is None), None)
+    tone, label, detail = status_bits(active, snaps)
+
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "status": {"state": tone, "label": label, "detail": detail},
+        "equity": float(snaps[-1]["equity"]) if snaps else None,
+        "cash": float(snaps[-1]["cash"]) if snaps else None,
+        "positions": {s: q for s, q in positions.items() if q},
+        **rows,
+    }
+
+
 def main() -> int:
     args = parse_args()
     path = Path(args.ledger) if args.ledger else default_ledger_path()
@@ -584,11 +619,17 @@ def main() -> int:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     html = build_html(conn, path)
+    state = build_state(conn) if args.json_out else None
     conn.close()
 
     out = Path(args.out)
     out.write_text(html, encoding="utf-8")
     print(f"wrote {out} ({len(html):,} bytes) from {path}")
+
+    if state is not None:
+        jout = Path(args.json_out)
+        jout.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        print(f"wrote {jout} ({jout.stat().st_size:,} bytes)")
     return 0
 
 
