@@ -272,6 +272,9 @@ broadcasting live positions is a different proposition.
 
 ## Verifying it actually works
 
+Step-by-step checklist for the first unattended run:
+[`first-run-checklist.md`](first-run-checklist.md).
+
 The first Discord heartbeat after 23:00 UTC on the next trading day is the real
 test. After that:
 
