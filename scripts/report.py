@@ -69,6 +69,22 @@ def glow(name: str, tint: str | None = None) -> str:
     )
 
 
+def rows_of(conn: sqlite3.Connection, table: str) -> list[sqlite3.Row]:
+    """All rows of a table, or none if the table does not exist.
+
+    This reads restored backups as well as the live file, so it can never
+    assume the schema matches today's code: a ledger archived before a table
+    existed is a normal input, not a fault. Missing table means no history to
+    show, which the panels already render as an empty state.
+    """
+    try:
+        return conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc):
+            raise
+        return []
+
+
 def hours_since(ts: str) -> float:
     return (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds() / 3600
 
@@ -555,11 +571,11 @@ def status_bits(halt, snapshots) -> tuple[str, str, str]:
 
 
 def build_html(conn: sqlite3.Connection, source: Path) -> str:
-    orders = conn.execute("SELECT * FROM orders ORDER BY id").fetchall()
-    fills = conn.execute("SELECT * FROM fills ORDER BY id").fetchall()
-    snapshots = conn.execute("SELECT * FROM equity_snapshots ORDER BY id").fetchall()
-    halts = conn.execute("SELECT * FROM halts ORDER BY id").fetchall()
-    gates = conn.execute("SELECT * FROM sentiment_gates ORDER BY id").fetchall()
+    orders = rows_of(conn, "orders")
+    fills = rows_of(conn, "fills")
+    snapshots = rows_of(conn, "equity_snapshots")
+    halts = rows_of(conn, "halts")
+    gates = rows_of(conn, "sentiment_gates")
     active = next((h for h in halts if h["cleared_at"] is None), None)
 
     positions: dict[str, int] = {}
@@ -651,7 +667,7 @@ def build_state(conn: sqlite3.Connection) -> dict:
     instead of silently rendering nonsense.
     """
     rows = {
-        t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")]
+        t: [dict(r) for r in rows_of(conn, t)]
         for t in ("orders", "fills", "equity_snapshots", "halts", "sentiment_gates")
     }
     positions: dict[str, int] = {}
