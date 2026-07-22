@@ -49,27 +49,60 @@ execution discipline. The resume value here is the end-to-end pipeline engineeri
 src/diyquant/
   config.py          # pydantic-settings: .env + config/settings.yaml
   data/              # models (Bar, NewsItem), providers/ (yfinance, alpaca), store.py (parquet)
-  signals/           # base protocol; technical/ (SMA crossover); sentiment/ (Phase 2)
+  signals/           # base protocol; technical/ (SMA crossover); sentiment/ (FinBERT + gate)
   backtest/          # vectorized engine with costs
-  risk/              # limits.py (kill-switch), sizing.py        [Phase 2]
-  execution/         # broker interface, simulated paper broker, ledger  [Phase 2]
-  alerts/            # discord webhook heartbeat                 [Phase 3]
-scripts/             # backfill.py, run_backtest.py
-data/                # local parquet store (gitignored)
+  risk/              # limits.py (kill-switch), sizing.py
+  execution/         # broker interface, simulated paper broker, ledger, pipeline
+  alerts/            # discord.py: webhook heartbeat, never raises
+scripts/             # backfill, run_backtest, run_live, score_news, report, check_alerts
+deploy/              # setup.sh, publish.sh, backup.sh, iam-policy.json (EC2 provisioning)
+docs/deploy.md       # the AWS runbook: read this before touching the box
+data/                # local parquet store + ledger.sqlite (gitignored)
 ```
+
+The ledger is the system of record: `orders`, `fills`, `equity_snapshots`, `halts`,
+`sentiment_gates`. It is append-only apart from order-status transitions and clearing
+a halt. `sentiment_gates` stores **every** gate evaluation, not only the vetoes: a veto
+count with no denominator cannot answer whether the gate earns its complexity. A NULL
+score there means no whitelisted news was found, which is distinct from a neutral
+reading and must not be collapsed to 0.0.
+
+Anything reading a ledger must tolerate an older schema. `report.py` reads restored
+backups as well as the live file, so a table that did not exist when the backup was
+taken is a normal input, not a fault.
 
 ## Phase roadmap
 
-- **Phase 1 (current):** data layer + vectorized backtester + SMA crossover, end-to-end
-  locally. Success = backtest runs with costs included, zero unhandled exceptions.
-- **Phase 2:** FinBERT sentiment filter (with article-age decay + source whitelist),
+- **Phase 1 — done.** Data layer + vectorized backtester + SMA crossover, end-to-end
+  locally, with costs included.
+- **Phase 2 — done.** FinBERT sentiment gate (article-age decay + source whitelist),
   risk module, paper execution via the built-in simulated broker (fills at real
   next-day opens). Owner is a Canadian resident: Alpaca accounts (even paper signup)
   are unavailable, so the Alpaca adapter exists but is unused; the real-money broker
   at the far-future live milestone will be IBKR Canada, in a non-registered account.
-- **Phase 3:** AWS deployment (single EC2 t4g.micro, cron-driven; S3 nightly backup of
-  data dir; scoped IAM user, aws CLI only, no AWS MCP unless ops become frequent),
-  Discord heartbeat/alerts, live paper track record.
+- **Phase 3 — done 2026-07-21.** Deployed on a single EC2 **t4g.small** (arm64,
+  AL2023) in ca-central-1, cron-driven, with Discord alerts, an external dead-man's
+  switch, append-only S3 backups, and a public CloudFront dashboard. Scoped IAM user,
+  aws CLI only, no AWS MCP unless ops become frequent. Runbook: `docs/deploy.md`.
+  Note t4g.small over t4g.micro: accounts created after 2025-07-15 get no 12-month
+  free tier, while the t4g.small trial runs to **2026-12-31**, making the larger
+  instance the free one. Revisit that in December 2026.
+- **Phase 4 — next, not started.** Intraday cadence. Three things must be settled
+  first: a signal that defines "notable" (SMA crossover has no concept of magnitude),
+  a data source that supports intraday backtesting (yfinance serves 1-minute bars for
+  only 7 days), and a reworked drawdown baseline (see below). Open design tension: the
+  news-sentiment edge has a multi-hour horizon, so trading faster may weaken the very
+  thing that differentiates this project. Decide the thesis deliberately.
+
+## Known constraint before any cadence change
+
+`run_once()` anchors the daily drawdown kill-switch to the **previous equity
+snapshot**, skipping the check when that snapshot exceeds `risk.max_baseline_age_hours`
+(120h, chosen to clear a 72h weekend and a 96h holiday weekend). At one run per day the
+previous snapshot is yesterday, which is correct. Running every few minutes would
+silently turn a "3% daily drawdown" limit into "3% in 5 minutes", so a slow bleed across
+a session would never trip it. The kill-switch would still pass its tests and no longer
+protect anything. Anchor the baseline to the current trading day before changing cadence.
 
 ## Communication
 
@@ -84,6 +117,27 @@ Assume no prior trading knowledge; do not assume familiarity with git workflows.
 - Lint: `ruff check .`  Test: `pytest`
 - yfinance note: `auto_adjust=True` is the default — adjusted prices are in `Close`;
   there is no `Adj Close` column.
-- Keep diffs small and phase-scoped. Do not scaffold Phase 2/3 modules before Phase 1
-  is verified end-to-end.
+- Keep diffs small and phase-scoped. Do not scaffold a later phase before the current
+  one is verified end-to-end.
 - Never place real trades. Paper trading only until the owner explicitly says otherwise.
+- **The repo is public.** Never commit AWS account IDs, bucket names, instance IDs or
+  webhook URLs; those live in `.env`, in the crontab on the box, or in placeholders.
+
+## Lesson from the Phase 3 deployment
+
+Seven bugs surfaced deploying to a real machine, none of which a passing test suite
+could have caught, because each was a wrong assumption about the environment rather
+than about the logic: a stale kill-switch baseline that only misbehaves under cron;
+urllib's default User-Agent, which Discord's Cloudflare front rejects with a 403;
+`git` absent on AL2023, making the bootstrap script unreachable inside the repo it
+needed to clone; `/tmp` being a ~900 MB RAM-backed tmpfs, so pip failed with ENOSPC on
+a box with 16 GB free; PyPI's default torch being a CUDA build, wasting 3.5 GB on a
+GPU-less host; `tar` reading the directory it was writing its own archive into; and
+**no cron daemon at all**, which fails silently — the crontab installs nowhere and the
+box looks perfectly healthy while running nothing.
+
+Two habits follow. Verify against the real environment before believing a component
+works, especially anything touching the network, the filesystem, or a scheduler. And
+read remote state back after writing it rather than trusting the write: an IAM policy
+applied with a mangled resource name reported success and would have denied every
+publish.
