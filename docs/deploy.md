@@ -10,6 +10,7 @@ Nothing here runs automatically. Work through it once, in order.
 
 ```
 EC2 t4g.small (Amazon Linux 2023, arm64)
+  cron 22:00 UTC Sunday   ->  scripts/refresh_universe.py -> config/universe.txt (S&P 500)
   cron 23:00 UTC Mon-Fri  ->  scripts/run_live.py   ->  Discord heartbeat
   cron 23:30 UTC Mon-Fri  ->  deploy/backup.sh      ->  S3 (append-only)
 ```
@@ -164,8 +165,13 @@ DIYQUANT_SITE_BUCKET=your-site-bucket
 DIYQUANT_DISTRIBUTION_ID=your-cloudfront-id
 HEALTHCHECK_URL=https://hc-ping.com/your-uuid-here
 
+# Refresh the S&P 500 universe weekly (membership changes only a few times a
+# year); new entrants are picked up by the daily backfill below.
+0 22 * * 0 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/refresh_universe.py >> /home/ec2-user/diyquant-cron.log 2>&1
+
 # Refresh the parquet bar store first: the dashboard's ticker sparklines read
-# from it, and run_live.py streams its own bars without persisting them.
+# from it, and run_live.py streams its own bars without persisting them. Now
+# incremental, so it fetches only new bars per ticker rather than full history.
 45 22 * * 1-5 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/backfill.py >> /home/ec2-user/diyquant-cron.log 2>&1
 
 # Trading cycle: 23:00 UTC = 19:00 ET, well after the 16:00 ET close.

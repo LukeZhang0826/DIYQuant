@@ -47,6 +47,9 @@ All times UTC, weekdays only. The US market closes at 21:00 UTC (16:00 ET).
 Each step degrades independently. Sentiment failures fall back to trading ungated
 rather than skipping the cycle; alert failures never abort a trade.
 
+Weekly (Sunday, 22:00 UTC) a fifth job refreshes the S&P 500 membership into
+`config/universe.txt`; new entrants are picked up by the next daily backfill.
+
 ## Operations
 
 Deployed on a single `t4g.small` (arm64, Amazon Linux 2023) in `ca-central-1`.
@@ -83,7 +86,8 @@ Phase 1 needs no keys.
 
 | Script | Purpose |
 | --- | --- |
-| `backfill.py` | Fetch daily bars into the parquet store |
+| `refresh_universe.py` | Refresh the S&P 500 universe into `config/universe.txt` |
+| `backfill.py` | Fetch daily bars into the parquet store (incremental) |
 | `run_backtest.py` | Vectorised backtest with costs and slippage |
 | `run_live.py` | One trading cycle: signal → risk → execution |
 | `score_news.py` | Score headlines through FinBERT |
@@ -92,20 +96,24 @@ Phase 1 needs no keys.
 
 ## What this does and does not show
 
-The strategy is an SMA(20/50) crossover, which trades roughly **five times a year
-per ticker**. Across four tickers that is about **20 trades a year**.
+The strategy is an SMA(20/50) crossover over the full self-updating **S&P 500**
+(~500 tickers). At that width, raw trade count is no longer the constraint; capital
+is. The account funds only a handful of positions at once, far fewer than the number
+of tickers that signal on any given day, so a **selection layer** (rank the signals,
+fund the best few) is the real open problem, not trade frequency.
 
-No statistically meaningful conclusion about profitability can be drawn from 20
-trades, or 40, or probably 100. Treat the equity curve as evidence the machinery
-works, not as evidence the strategy makes money. That distinction is the point.
+Treat the equity curve as evidence the machinery works, not as evidence the strategy
+makes money. An SMA crossover with no notion of magnitude flips most of the universe
+long or short at once; separating a real edge from that is exactly what the validation
+and selection work ahead is for. That distinction is the point.
 
 What the track record *can* support, honestly:
 
 - the pipeline runs unattended without losing days
 - risk limits fire when they should
 - backtest and live execution agree
-- the sentiment gate fires at a defensible rate (~1,000 evaluations a year, so
-  this becomes answerable within months rather than years)
+- the sentiment gate fires at a defensible rate (one evaluation per ticker per cycle,
+  so across ~500 tickers this becomes answerable within weeks, not years)
 
 ## Roadmap
 
@@ -114,8 +122,13 @@ What the track record *can* support, honestly:
       module, paper execution against a simulated broker filling at real next-day opens
 - [x] **Phase 3** — AWS deployment, cron scheduling, Discord alerts, dead-man's
       switch, S3 backups, public dashboard
+- [x] **Universe** — 4 tickers to the full self-updating S&P 500 (~500), refreshed
+      weekly from the live constituents list, with incremental backfill so the daily
+      run stays cheap at scale
 - [ ] **Phase 4** — intraday cadence, a signal that defines "notable", reworked
-      drawdown baseline, and a data source that supports intraday backtesting
+      drawdown baseline, and a data source that supports intraday backtesting.
+      Sequenced in [`docs/roadmap-vision.md`](docs/roadmap-vision.md), which moves
+      cadence later, behind sentiment, validation, and market-neutral work
 
 Phase 4 note: the daily drawdown kill-switch currently compares against the previous
 cycle's equity snapshot. At daily cadence that is the previous day, which is correct.
