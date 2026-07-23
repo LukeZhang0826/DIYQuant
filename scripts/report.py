@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 STALE_AFTER_HOURS = 30.0  # a weekday cycle runs every 24h; 30 allows for lateness
 SPARK_BARS = 90  # trading days of price history per ticker card
+UNIVERSE_CARDS = 24  # cap on active-ticker cards; a 503-name universe cannot show all
 
 
 def parse_args() -> argparse.Namespace:
@@ -201,9 +202,13 @@ def equity_panel(snapshots: list[sqlite3.Row]) -> str:
 
 
 def ticker_cards() -> str:
-    """One card per universe ticker: price history and the live signal.
+    """Universe overview: a signal tally plus cards for the tickers actually acting.
 
-    Skipped entirely when the parquet store is absent, rather than faked.
+    At S&P 500 scale, one card per ticker is an unreadable wall of hundreds of charts
+    and makes the box recompute every signal just to draw the page. Instead we count
+    long/short/flat across the whole universe and draw cards only for the active
+    (non-flat) names, capped at the biggest movers. Skipped entirely when the parquet
+    store is absent, rather than faked.
     """
     try:
         from diyquant.config import get_settings
@@ -216,8 +221,9 @@ def ticker_cards() -> str:
     except Exception:
         return ""
 
-    cards = []
-    for i, ticker in enumerate(tickers):
+    counts = {1: 0, -1: 0, 0: 0}
+    active: list[tuple[str, list[float], int, float]] = []  # ticker, closes, signal, change
+    for ticker in tickers:
         try:
             bars = load_bars(ticker)
             closes = [float(v) for v in bars["close"].tail(SPARK_BARS)]
@@ -226,13 +232,24 @@ def ticker_cards() -> str:
             continue
         if len(closes) < 2:
             continue
+        counts[signal] = counts.get(signal, 0) + 1
+        if signal != 0:
+            change = (closes[-1] - closes[0]) / closes[0] * 100
+            active.append((ticker, closes, signal, change))
 
-        change = (closes[-1] - closes[0]) / closes[0] * 100
+    total = counts[1] + counts[-1] + counts[0]
+    if total == 0:
+        return ""  # store absent or empty
+
+    active.sort(key=lambda a: abs(a[3]), reverse=True)
+    shown = active[:UNIVERSE_CARDS]
+
+    cards = []
+    for i, (ticker, closes, signal, change) in enumerate(shown):
         tone = "pos" if change >= 0 else "neg"
         sign = "+" if change >= 0 else ""
-        label = {1: "long", -1: "short", 0: "flat"}.get(signal, "flat")
-        stance = {1: "pos", -1: "neg", 0: "idle"}.get(signal, "idle")
-
+        label = {1: "long", -1: "short"}.get(signal, "flat")
+        stance = {1: "pos", -1: "neg"}.get(signal, "idle")
         wash = "var(--pos)" if tone == "pos" else "var(--neg)"
         cards.append(f"""<div class="card" style="{glow(ticker, wash)}">
   <div class="card-head">
@@ -248,12 +265,41 @@ def ticker_cards() -> str:
     {esc(settings.strategy.params.get("fast"))}/{esc(settings.strategy.params.get("slow"))}</div>
 </div>""")
 
+    summary = f"""<div class="tiles" style="margin-bottom:12px">
+  <div class="tile"><span class="tile-label">Universe</span>
+    <span class="tile-value">{total}</span>
+    <span class="tile-note">tickers with price history</span></div>
+  <div class="tile"><span class="tile-label">Long</span>
+    <span class="tile-value pos">{counts[1]}</span>
+    <span class="tile-note">buy signal</span></div>
+  <div class="tile"><span class="tile-label">Short</span>
+    <span class="tile-value neg">{counts[-1]}</span>
+    <span class="tile-note">sell signal</span></div>
+  <div class="tile"><span class="tile-label">Flat</span>
+    <span class="tile-value muted">{counts[0]}</span>
+    <span class="tile-note">no position</span></div>
+</div>"""
+
     if not cards:
-        return ""
+        body = (
+            summary + '<div class="empty">No active signals right now. Every ticker is flat.</div>'
+        )
+    else:
+        note = (
+            f"top {len(shown)} of {len(active)} active by 90-session move"
+            if len(active) > len(shown)
+            else "all active names"
+        )
+        body = (
+            summary
+            + f'<div class="panel-note" style="margin-bottom:8px">{esc(note)}</div>'
+            + f'<div class="cards">{"".join(cards)}</div>'
+        )
+
     return f"""<div class="panel" style="{glow("universe")}">
   <div class="panel-head"><h2>Universe</h2>
-    <span class="panel-note">signal state per ticker</span></div>
-  <div class="cards">{"".join(cards)}</div>
+    <span class="panel-note">signal tally across the S&amp;P 500; cards for active names</span></div>
+  {body}
 </div>"""
 
 
