@@ -82,7 +82,30 @@ def get_secrets() -> Secrets:
     return Secrets()
 
 
+def _resolve_universe(universe: dict) -> None:
+    """Load tickers from universe['source'] file when present, else keep inline tickers.
+
+    The source file is machine-generated (scripts/refresh_universe.py) and gitignored,
+    so a fresh checkout without it falls back to the inline `tickers` list.
+    """
+    source = universe.get("source")
+    if not source:
+        return
+    path = PROJECT_ROOT / source
+    if not path.exists():
+        return
+    tickers = [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if tickers:
+        universe["tickers"] = tickers
+
+
 @lru_cache
 def get_settings() -> Settings:
     with open(PROJECT_ROOT / "config" / "settings.yaml", encoding="utf-8") as f:
-        return Settings(**yaml.safe_load(f))
+        raw = yaml.safe_load(f)
+    _resolve_universe(raw.get("universe", {}))
+    return Settings(**raw)

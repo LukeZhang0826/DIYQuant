@@ -30,6 +30,9 @@ notebooks/*.ipynb_checkpoints/
 # Generated knowledge graph — regenerable, never commit
 /graphify-out/
 
+# Generated trading universe: regenerable via scripts/refresh_universe.py, never commit
+/config/universe.txt
+
 # OS
 .DS_Store
 Thumbs.db
