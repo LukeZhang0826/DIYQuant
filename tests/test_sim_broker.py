@@ -87,6 +87,26 @@ def test_sell_receives_slippage_against_and_flattens(tmp_path):
     assert broker3.get_position("AAPL") == 0
 
 
+def test_order_pends_when_symbol_bars_are_missing(tmp_path):
+    """A ticker whose bars are no longer loaded (delisted, or dropped from the
+    universe) must not crash reconciliation; its order stays pending."""
+    broker = make_broker(tmp_path, 5)
+    result = broker.submit_market_order("AAPL", 20)
+    broker.close()
+
+    # Next run: AAPL cannot be priced, so it is absent from the bars dict.
+    broker2 = SimulatedBroker(
+        tmp_path / "sim.sqlite",
+        {},
+        cost_bps=COST_BPS,
+        slippage_bps=SLIP_BPS,
+        starting_cash=100_000.0,
+    )
+    fill = broker2.get_order_fill(result.broker_order_id)
+    assert fill.status == "accepted"
+    assert fill.filled_qty == 0
+
+
 def test_equity_marks_positions_to_latest_close(tmp_path):
     broker = make_broker(tmp_path, 5)
     result = broker.submit_market_order("AAPL", 20)

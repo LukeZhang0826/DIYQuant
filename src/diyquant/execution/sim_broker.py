@@ -91,7 +91,12 @@ class SimulatedBroker:
                 avg_price=float(order["fill_price"]),
             )
 
-        bars = self._bars[order["symbol"]]
+        bars = self._bars.get(order["symbol"])
+        # No bars means the symbol could not be priced this cycle (e.g. a
+        # delisted ticker skipped at load time). Treat it like "no later bar
+        # yet" and leave the order pending, rather than crash the whole cycle.
+        if bars is None:
+            return FillInfo(status="accepted", filled_qty=0, avg_price=0.0)
         later = bars[bars.index.date.astype(str) > order["submitted_date"]]
         if later.empty:
             return FillInfo(status="accepted", filled_qty=0, avg_price=0.0)

@@ -232,6 +232,42 @@ def test_active_halt_blocks_all_trading(tmp_path):
     assert broker.submitted == []
 
 
+def test_untradable_symbol_winds_down_but_is_not_traded(tmp_path):
+    """A ticker that left the universe must still fill its open order (wind-down),
+    but must not receive a fresh signal-driven trade."""
+    broker = FakeBroker(
+        equity=10_000,
+        positions={"SPY": 26},
+        fills={"sim-6": FillInfo(status="filled", filled_qty=26, avg_price=500.0)},
+    )
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    ledger.record_order(
+        symbol="SPY",
+        side="sell",
+        qty=26,
+        signal_name="constant",
+        signal_value=0,
+        status="submitted",
+        broker_order_id="sim-6",
+    )
+
+    report = run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol={"AAPL": make_bars(100.0), "SPY": make_bars(500.0)},
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+        tradable={"AAPL"},
+    )
+
+    # SPY's open order still reconciled, but only AAPL got a new order.
+    assert report.fills_reconciled == 1
+    assert broker.submitted == [("AAPL", 20)]
+    # SPY is closed out; the only order left pending is AAPL's fresh buy.
+    assert [row["symbol"] for row in ledger.pending_orders()] == ["AAPL"]
+
+
 def test_reconciles_pending_fill(tmp_path):
     broker = FakeBroker(
         equity=10_000,

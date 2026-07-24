@@ -35,23 +35,28 @@ def _truncate(content: str) -> str:
     return content[: MAX_CONTENT_CHARS - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
 
 
-def format_cycle_alert(report: CycleReport, strategy_name: str) -> str:
+def format_cycle_alert(report: CycleReport, strategy_name: str, dashboard_url: str = "") -> str:
     """Render a finished cycle as the message body.
 
     A halt leads with a siren because it is the one outcome demanding a human:
     the pipeline has flattened the book and will not trade again until the halt
     is cleared by hand.
+
+    The dashboard link, when given, sits right under the header: a large-universe
+    cycle can emit enough notes to overflow Discord's limit, and truncation keeps
+    the head, so a link at the foot would be the first thing cut.
     """
     header = "**HALTED**" if report.halted else "Cycle OK"
-    return "\n".join(
-        [
-            f"{header} - `{strategy_name}`",
-            f"fills reconciled : {report.fills_reconciled}",
-            f"orders submitted : {report.orders_submitted}",
-            f"orders blocked   : {report.orders_blocked}",
-            *report.notes,
-        ]
-    )
+    lines = [f"{header} - `{strategy_name}`"]
+    if dashboard_url:
+        lines.append(f"dashboard: {dashboard_url}")
+    lines += [
+        f"fills reconciled : {report.fills_reconciled}",
+        f"orders submitted : {report.orders_submitted}",
+        f"orders blocked   : {report.orders_blocked}",
+        *report.notes,
+    ]
+    return "\n".join(lines)
 
 
 class DiscordNotifier:

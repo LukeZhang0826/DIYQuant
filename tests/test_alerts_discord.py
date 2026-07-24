@@ -12,6 +12,7 @@ from diyquant.alerts.discord import (
 from diyquant.execution.pipeline import CycleReport
 
 WEBHOOK = "https://discord.com/api/webhooks/123/secret-token"
+DASHBOARD = "https://example.cloudfront.net"
 
 
 class FakeResponse:
@@ -54,6 +55,24 @@ def test_format_reports_counts_for_a_clean_cycle():
     assert "sma_crossover" in text
     assert "fills reconciled : 2" in text
     assert "orders submitted : 3" in text
+
+
+def test_format_includes_dashboard_link_when_configured():
+    text = format_cycle_alert(CycleReport(fills_reconciled=1), "sma_crossover", DASHBOARD)
+    assert f"dashboard: {DASHBOARD}" in text
+
+
+def test_format_omits_dashboard_line_when_url_is_blank():
+    text = format_cycle_alert(CycleReport(), "sma_crossover")
+    assert "dashboard:" not in text
+
+
+def test_dashboard_link_sits_under_the_header_so_truncation_cannot_drop_it():
+    """A large-universe cycle can flood notes past Discord's limit; the link
+    must sit high enough that truncation (which keeps the head) never cuts it."""
+    report = CycleReport(notes=[f"note {i}" for i in range(400)])
+    text = format_cycle_alert(report, "sma_crossover", DASHBOARD)
+    assert text.splitlines()[1] == f"dashboard: {DASHBOARD}"
 
 
 def test_format_leads_with_halt_and_keeps_notes():

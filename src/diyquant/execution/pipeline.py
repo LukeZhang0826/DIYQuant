@@ -9,6 +9,11 @@ Order of operations each cycle:
      snapshot is too stale to stand in for the start of the trading day.
   5. Per symbol: compute the signal, size it, cap-check it, submit the delta.
 
+`bars_by_symbol` may hold more symbols than `tradable` covers: a ticker that
+left the universe (S&P 500 turnover) while we still hold it or have an open
+order on it must keep its bars loaded so steps 1-4 can price and wind it down,
+but must not get a fresh signal-driven trade in step 5.
+
 The broker is the source of truth for current positions; the ledger's derived
 position exists to reconcile against it (Phase 3 alerting).
 """
@@ -99,6 +104,7 @@ def run_once(
     strategy_name: str,
     settings: Settings,
     sentiment_scores: dict[str, float | None] | None = None,
+    tradable: set[str] | None = None,
 ) -> CycleReport:
     report = CycleReport()
     risk_cfg = settings.risk
@@ -138,6 +144,10 @@ def run_once(
                 return report
 
     for symbol, bars in bars_by_symbol.items():
+        if tradable is not None and symbol not in tradable:
+            # Loaded only so steps 1-4 could reconcile and value it; a ticker
+            # that left the universe is wound down, never traded fresh.
+            continue
         signal = strategy.generate(bars)
         target = int(signal.iloc[-1])
         if sentiment_scores is not None:

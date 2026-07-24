@@ -21,6 +21,7 @@ class Secrets(BaseSettings):
     alpaca_secret_key: str = ""
     alpaca_paper: bool = True
     discord_webhook_url: str = ""
+    dashboard_url: str = ""
     anthropic_api_key: str = ""
 
 

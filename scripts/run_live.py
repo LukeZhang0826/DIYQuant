@@ -72,15 +72,31 @@ def fetch_sentiment_scores(settings: Settings) -> dict[str, float | None]:
 
 def main() -> None:
     settings = get_settings()
+    universe = settings.universe["tickers"]
 
+    ledger = Ledger(PROJECT_ROOT / settings.execution.ledger_path)
+
+    # Load bars for the tradable universe first. A failure here is a real
+    # outage (yfinance down, bad symbol) and must surface, not be swallowed.
     provider = YFinanceProvider()
     bars_by_symbol = {
-        ticker: provider.fetch_daily_bars(ticker, settings.data.start)
-        for ticker in settings.universe["tickers"]
+        ticker: provider.fetch_daily_bars(ticker, settings.data.start) for ticker in universe
     }
 
+    # Then any ticker the broker still has an open order on. A stock can leave
+    # the universe (S&P 500 turnover) while we hold it or have an unfilled
+    # order; its bars must stay loaded so that order reconciles and the
+    # position winds down. But such a ticker may be delisted, not just demoted,
+    # so a failed fetch here must not sink the whole cycle: skip it and let its
+    # order stay pending (see SimulatedBroker.get_order_fill) for a human to clear.
+    pending = {row["symbol"] for row in ledger.pending_orders()}
+    for ticker in sorted(pending - set(universe)):
+        try:
+            bars_by_symbol[ticker] = provider.fetch_daily_bars(ticker, settings.data.start)
+        except Exception as exc:  # noqa: BLE001 - one unpriceable orphan must not halt trading
+            print(f"skipping unpriceable orphan {ticker}, order left pending: {exc}")
+
     broker = make_broker(settings, bars_by_symbol)
-    ledger = Ledger(PROJECT_ROOT / settings.execution.ledger_path)
     strategy = SmaCrossover(**settings.strategy.params)
 
     sentiment_scores = None
@@ -95,6 +111,7 @@ def main() -> None:
         strategy_name=settings.strategy.name,
         settings=settings,
         sentiment_scores=sentiment_scores,
+        tradable=set(universe),
     )
     ledger.close()
     print(report.summary())
@@ -102,11 +119,12 @@ def main() -> None:
     # Last step on purpose: the cycle is already durably recorded, so a failed
     # alert costs visibility, never state.
     if settings.alerts.enabled:
+        secrets = get_secrets()
         notifier = DiscordNotifier(
-            get_secrets().discord_webhook_url,
+            secrets.discord_webhook_url,
             timeout_seconds=settings.alerts.timeout_seconds,
         )
-        notifier.send(format_cycle_alert(report, settings.strategy.name))
+        notifier.send(format_cycle_alert(report, settings.strategy.name, secrets.dashboard_url))
 
 
 if __name__ == "__main__":
