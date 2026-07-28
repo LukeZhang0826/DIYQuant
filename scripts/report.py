@@ -28,9 +28,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-STALE_AFTER_HOURS = 30.0  # a weekday cycle runs every 24h; 30 allows for lateness
 SPARK_BARS = 90  # trading days of price history per ticker card
 UNIVERSE_CARDS = 24  # cap on active-ticker cards; a 503-name universe cannot show all
+
+
+def stale_after_hours() -> float:
+    """How old the last cycle may be before the dashboard calls it stale.
+
+    Read from config rather than held as a constant here so that this banner and
+    the check_pulse.py Discord alert cannot drift apart and disagree about
+    whether the pipeline is running.
+    """
+    from diyquant.config import get_settings
+
+    return get_settings().alerts.stale_after_hours
 
 
 def parse_args() -> argparse.Namespace:
@@ -603,15 +614,16 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--ink-2
 
 def status_bits(halt, snapshots) -> tuple[str, str, str]:
     if halt is not None:
-        return ("halt", "Halted", f"{halt['reason']} — triggered {short_ts(halt['triggered_at'])}.")
+        return ("halt", "Halted", f"{halt['reason']}, triggered {short_ts(halt['triggered_at'])}.")
     if not snapshots:
         return ("warn", "No runs", "No cycle has completed yet.")
+    stale_hours = stale_after_hours()
     age = hours_since(snapshots[-1]["ts"])
-    if age > STALE_AFTER_HOURS:
+    if age > stale_hours:
         return (
             "warn",
             "Stale",
-            f"Last cycle {age:.0f}h ago, past the {STALE_AFTER_HOURS:.0f}h gap.",
+            f"Last cycle {age:.0f}h ago, past the {stale_hours:.0f}h gap.",
         )
     return ("ok", "Running", f"Last cycle {short_ts(snapshots[-1]['ts'])}, {age:.1f}h ago.")
 

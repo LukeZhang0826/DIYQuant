@@ -13,6 +13,7 @@ EC2 t4g.small (Amazon Linux 2023, arm64)
   cron 22:00 UTC Sunday   ->  scripts/refresh_universe.py -> config/universe.txt (S&P 500)
   cron 23:00 UTC Mon-Fri  ->  scripts/run_live.py   ->  Discord heartbeat
   cron 23:30 UTC Mon-Fri  ->  deploy/backup.sh      ->  S3 (append-only)
+  cron 02:00 UTC Tue-Sat  ->  scripts/check_pulse.py -> Discord, only when not trading
 ```
 
 ## Cost, honestly
@@ -184,6 +185,12 @@ HEALTHCHECK_URL=https://hc-ping.com/your-uuid-here
 
 # Backup last, so it captures everything the cycle produced.
 30 23 * * 1-5 /home/ec2-user/DIYQuant/deploy/backup.sh >> /home/ec2-user/diyquant-cron.log 2>&1
+
+# Independent liveness check. It reads the ledger rather than watching a job, so
+# it still reports correctly when the trading line above is missing or replaced.
+# Tue-Sat: the Sunday and Monday slots would look back past Friday's cycle and
+# call a normal weekend stale. See Step 6.
+0 2 * * 2-6 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/check_pulse.py >> /home/ec2-user/diyquant-cron.log 2>&1
 ```
 
 Notes on the schedule:
@@ -244,6 +251,32 @@ that only matters on the day everything else has already failed.
 Note what this does *not* cover: a cycle that runs fine but makes bad decisions.
 The switch proves the pipeline is alive, not that it is right. The Discord
 heartbeat and the kill-switch cover that side.
+
+### The gap the switch cannot see, and `check_pulse.py`
+
+The dead-man's switch watches **whatever runs at 23:00**, not trading itself. So
+it cannot tell a trading cycle from any other job in that slot, and on
+2026-07-25 that distinction stopped being theoretical: `run_live.py` was swapped
+out of cron for `parked_heartbeat.py`, which always exits 0. The switch stayed
+green, Discord kept saying "alive", and nothing traded for four days without one
+alert. Every liveness signal was hung off the same cron line, so replacing that
+line turned the monitoring into a report on itself.
+
+`scripts/check_pulse.py` closes that. It reads the **ledger**, and only a real
+cycle writes an equity snapshot, so no job that merely exits 0 can satisfy it.
+It runs on its own cron line and stays correct when the trading line is missing
+entirely. It is alert-only: silence means trading, and it repeats daily until
+someone acts.
+
+**If you park trading, record it here.** Add a dated line to this file saying it
+is parked and why, in the same commit that changes the crontab. The state lives
+on the box where the repo cannot see it, so an undocumented park reads as a
+working deployment to everyone including your future self.
+
+| Date | State | Note |
+| --- | --- | --- |
+| 2026-07-24 | parked | Trading taken off cron pending the universe-vs-capital selection question. Not recorded at the time; found four days later. |
+| 2026-07-28 | trading | Restored, cycle verified by hand, `check_pulse.py` added so a silent park cannot recur. |
 
 ## Step 7: The public dashboard
 

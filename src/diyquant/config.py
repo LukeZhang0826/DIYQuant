@@ -65,6 +65,7 @@ class SentimentConfig(BaseModel):
 class AlertsConfig(BaseModel):
     enabled: bool = True
     timeout_seconds: float = 10.0
+    stale_after_hours: float = 30.0
 
 
 class Settings(BaseModel):
