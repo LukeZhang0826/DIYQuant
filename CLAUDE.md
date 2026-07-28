@@ -54,7 +54,8 @@ src/diyquant/
   risk/              # limits.py (kill-switch), sizing.py
   execution/         # broker interface, simulated paper broker, ledger, pipeline
   alerts/            # discord.py: webhook heartbeat, never raises
-scripts/             # refresh_universe, backfill, run_backtest, run_live, score_news, report, check_alerts
+scripts/             # refresh_universe, backfill, run_backtest, run_live, score_news, report,
+                     # check_alerts (smoke-test the webhook), check_pulse (alert when not trading)
 deploy/              # setup.sh, publish.sh, backup.sh, iam-policy.json (EC2 provisioning)
 docs/deploy.md       # the AWS runbook: read this before touching the box
 data/                # local parquet store + ledger.sqlite (gitignored)
