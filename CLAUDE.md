@@ -8,22 +8,22 @@ with an NLP news-sentiment filter as the Phase 2 differentiator.
 
 Origin: a viral LinkedIn/X post (Jan 2026, urn:li:activity:7480578720085385216) about a trader
 combining Claude for market context, an OSINT headline parser, and MiroFish simulation to trade
-oil. The P&L claims are unverifiable — the *architecture* (news signal -> simulation -> decision
+oil. The P&L claims are unverifiable: the *architecture* (news signal -> simulation -> decision
 filter) is the inspiration, not the numbers.
 
-Reference repos (study, don't fork — this codebase is built from scratch on purpose):
+Reference repos (study, don't fork, since this codebase is built from scratch on purpose):
 
-- [MiroFish](https://github.com/666ghj/MiroFish) — swarm-simulation prediction engine from the
+- [MiroFish](https://github.com/666ghj/MiroFish): swarm-simulation prediction engine from the
   original post. GraphRAG over news, agent-based event simulation. Reference for ideas only;
   too heavyweight to be a dependency here.
-- [TradingAgents](https://github.com/tauricresearch/tradingagents) — multi-agent LLM trading
+- [TradingAgents](https://github.com/tauricresearch/tradingagents): multi-agent LLM trading
   framework (analyst/sentiment/technical agents). Best reference for LLM-as-analyst prompt
   structure.
-- [FinGPT](https://github.com/AI4Finance-Foundation/FinGPT) — open financial LLMs; alternative
+- [FinGPT](https://github.com/AI4Finance-Foundation/FinGPT): open financial LLMs; alternative
   to FinBERT for sentiment extraction.
-- [LLM-Enhanced-Trading](https://github.com/Ronitt272/LLM-Enhanced-Trading) — closest precedent
-  to this project's core thesis: FinGPT sentiment layered over an SMA strategy.
-- FinBERT model: `ProsusAI/finbert` on Hugging Face — local, fast headline sentiment (Phase 2).
+- [LLM-Enhanced-Trading](https://github.com/Ronitt272/LLM-Enhanced-Trading): the closest
+  precedent to this project's core thesis, FinGPT sentiment layered over an SMA strategy.
+- FinBERT model `ProsusAI/finbert` on Hugging Face: local, fast headline sentiment (Phase 2).
 
 Why from scratch: the reference repos are research demos with weak risk management and
 execution discipline. The resume value here is the end-to-end pipeline engineering.
@@ -75,27 +75,27 @@ taken is a normal input, not a fault.
 
 ## Phase roadmap
 
-- **Phase 1 — done.** Data layer + vectorized backtester + SMA crossover, end-to-end
+- **Phase 1: done.** Data layer + vectorized backtester + SMA crossover, end-to-end
   locally, with costs included.
-- **Phase 2 — done.** FinBERT sentiment gate (article-age decay + source whitelist),
+- **Phase 2: done.** FinBERT sentiment gate (article-age decay + source whitelist),
   risk module, paper execution via the built-in simulated broker (fills at real
   next-day opens). Owner is a Canadian resident: Alpaca accounts (even paper signup)
   are unavailable, so the Alpaca adapter exists but is unused; the real-money broker
   at the far-future live milestone will be IBKR Canada, in a non-registered account.
-- **Phase 3 — done 2026-07-21.** Deployed on a single EC2 **t4g.small** (arm64,
+- **Phase 3: done 2026-07-21.** Deployed on a single EC2 **t4g.small** (arm64,
   AL2023) in ca-central-1, cron-driven, with Discord alerts, an external dead-man's
   switch, append-only S3 backups, and a public CloudFront dashboard. Scoped IAM user,
   aws CLI only, no AWS MCP unless ops become frequent. Runbook: `docs/deploy.md`.
   Note t4g.small over t4g.micro: accounts created after 2025-07-15 get no 12-month
   free tier, while the t4g.small trial runs to **2026-12-31**, making the larger
   instance the free one. Revisit that in December 2026.
-- **Universe expansion — done 2026-07-22.** From 4 hand-listed tickers to the full
+- **Universe expansion: done 2026-07-22.** From 4 hand-listed tickers to the full
   **self-updating S&P 500** (~503). `scripts/refresh_universe.py` scrapes the current
   constituents into `config/universe.txt` (gitignored, machine-generated; config falls
   back to the inline 4 if absent), run weekly by cron. `scripts/backfill.py` is now
   incremental so the daily run stays cheap at this scale. Adds `lxml` + `requests`. See
   the capital/selection constraint below.
-- **Phase 4 — next, not started.** Intraday cadence. Three things must be settled
+- **Phase 4: next, not started.** Intraday cadence. Three things must be settled
   first: a signal that defines "notable" (SMA crossover has no concept of magnitude),
   a data source that supports intraday backtesting (yfinance serves 1-minute bars for
   only 7 days), and a reworked drawdown baseline (see below). Open design tension: the
@@ -157,7 +157,7 @@ Assume no prior trading knowledge; do not assume familiarity with git workflows.
 
 - Python >= 3.11, src layout, hatchling build. Install: `pip install -e ".[dev]"`
 - Lint: `ruff check .`  Test: `pytest`
-- yfinance note: `auto_adjust=True` is the default — adjusted prices are in `Close`;
+- yfinance note: `auto_adjust=True` is the default: adjusted prices are in `Close`;
   there is no `Adj Close` column.
 - The universe lives in `config/universe.txt` (gitignored, generated by
   `scripts/refresh_universe.py`). Config resolves `universe.source` to that file and
@@ -179,7 +179,7 @@ urllib's default User-Agent, which Discord's Cloudflare front rejects with a 403
 needed to clone; `/tmp` being a ~900 MB RAM-backed tmpfs, so pip failed with ENOSPC on
 a box with 16 GB free; PyPI's default torch being a CUDA build, wasting 3.5 GB on a
 GPU-less host; `tar` reading the directory it was writing its own archive into; and
-**no cron daemon at all**, which fails silently — the crontab installs nowhere and the
+**no cron daemon at all**, which fails silently: the crontab installs nowhere and the
 box looks perfectly healthy while running nothing.
 
 Two habits follow. Verify against the real environment before believing a component

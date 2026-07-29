@@ -1,6 +1,6 @@
 """Vectorized daily backtester with transaction costs and slippage.
 
-Signal at bar T is executed at bar T+1 (shift(1)) — no look-ahead.
+Signal at bar T is executed at bar T+1 (shift(1)): no look-ahead.
 """
 
 from dataclasses import dataclass

@@ -1,4 +1,4 @@
-# Secrets — never commit
+# Secrets: never commit
 .env
 
 # Keys and certs. The repo is public: a private key committed here is
@@ -9,10 +9,10 @@
 *.p12
 credentials
 
-# Claude Code local settings — per-machine, never commit
+# Claude Code local settings: per-machine, never commit
 .claude/settings.local.json
 
-# Data — local parquet store at repo root, never commit
+# Data: local parquet store at repo root, never commit
 # (anchored so src/diyquant/data/ stays tracked)
 /data/
 
@@ -27,7 +27,7 @@ __pycache__/
 # Notebooks: strip outputs before committing
 notebooks/*.ipynb_checkpoints/
 
-# Generated knowledge graph — regenerable, never commit
+# Generated knowledge graph: regenerable, never commit
 /graphify-out/
 
 # Generated trading universe: regenerable via scripts/refresh_universe.py, never commit

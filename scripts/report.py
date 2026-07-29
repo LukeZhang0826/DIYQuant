@@ -181,7 +181,7 @@ def equity_panel(snapshots: list[sqlite3.Row]) -> str:
 
     dots = "".join(
         f'<circle class="dot" cx="{p.split(",")[0]}" cy="{p.split(",")[1]}" r="3">'
-        f"<title>{esc(short_ts(r['ts']))} — {esc(money(float(r['equity'])))}</title></circle>"
+        f"<title>{esc(short_ts(r['ts']))} · {esc(money(float(r['equity'])))}</title></circle>"
         for p, r in zip(line.split(" "), snapshots)
     )
 
@@ -664,7 +664,7 @@ def build_html(conn: sqlite3.Connection, source: Path) -> str:
     )
 
     generated = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
-    return f"""<title>DIYQuant — dashboard</title>
+    return f"""<title>DIYQuant dashboard</title>
 <style>{CSS}</style>
 <div class="shell">
   <div class="topbar">

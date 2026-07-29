@@ -1,4 +1,4 @@
-"""yfinance provider — Phase 1 daily bars. auto_adjust=True, so Close is adjusted."""
+"""yfinance provider: Phase 1 daily bars. auto_adjust=True, so Close is adjusted."""
 
 import pandas as pd
 import yfinance as yf

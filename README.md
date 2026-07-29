@@ -9,7 +9,7 @@ Runs unattended on AWS every trading day and publishes what it did:
 **Live dashboard → <https://d1d65vxvyvrbmn.cloudfront.net>**
 
 > Paper trading only, against a simulated broker. This is a systems-engineering
-> project, not financial advice and not a track record of profitability — see
+> project, not financial advice and not a track record of profitability: see
 > [What this does and does not show](#what-this-does-and-does-not-show).
 
 ## Architecture
@@ -134,19 +134,19 @@ What the track record *can* support, honestly:
 
 ## Roadmap
 
-- [x] **Phase 1** — data layer, parquet store, vectorised backtester, SMA baseline
-- [x] **Phase 2** — FinBERT sentiment gate (age decay + source whitelist), risk
+- [x] **Phase 1**: data layer, parquet store, vectorised backtester, SMA baseline
+- [x] **Phase 2**: FinBERT sentiment gate (age decay + source whitelist), risk
       module, paper execution against a simulated broker filling at real next-day opens
-- [x] **Phase 3** — AWS deployment, cron scheduling, Discord alerts, dead-man's
+- [x] **Phase 3**: AWS deployment, cron scheduling, Discord alerts, dead-man's
       switch, S3 backups, public dashboard
-- [x] **Universe** — 4 tickers to the full self-updating S&P 500 (~500), refreshed
+- [x] **Universe**: 4 tickers to the full self-updating S&P 500 (~500), refreshed
       weekly from the live constituents list, with incremental backfill so the daily
       run stays cheap at scale
 - [x] **Selection**: rank the ~470 daily signals and fund `risk.max_positions` of
       them, with a hysteresis buffer so a name slipping one place is not sold and
       rebought. Ranking on trend gap is deliberately the simple version; a better
       score is Stage 4/7 in [`docs/roadmap-vision.md`](docs/roadmap-vision.md)
-- [ ] **Phase 4** — intraday cadence, a signal that defines "notable", reworked
+- [ ] **Phase 4**: intraday cadence, a signal that defines "notable", reworked
       drawdown baseline, and a data source that supports intraday backtesting.
       Sequenced in [`docs/roadmap-vision.md`](docs/roadmap-vision.md), which moves
       cadence later, behind sentiment, validation, and market-neutral work
