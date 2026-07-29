@@ -75,6 +75,13 @@ If only one track gets built first, build this alongside A.
 
 ### D. Portfolio construction (turn signals into money-shaped positions)
 
+- **Selection: shipped 2026-07-28, deliberately naive.** ~470 signals, five slots.
+  `risk/selection.py` ranks on the SMA gap (`|fast - slow| / slow`) and funds the top
+  `risk.max_positions`, with a hysteresis buffer against churn. What it does *not* do
+  is claim that ranking predicts anything: trend gap is a proxy for conviction, and a
+  wide gap can equally mean the move already happened. Everything below is the work of
+  replacing it with a score that has been measured, which needs Stage 1 first. Do not
+  mistake the layer existing for the problem being solved.
 - **Shorting to long/short market-neutral.** The powerful version of shorting is not
   "also bet down"; it is holding longs and shorts so market moves cancel and only the
   stock-picking edge remains. The signal contract is already `{-1, 0, +1}`, so the
