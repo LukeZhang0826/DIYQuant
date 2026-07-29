@@ -43,6 +43,12 @@ alerts:                        # Phase 3: heartbeat so an unattended cron run is
 risk:                          # enforced in Phase 2 live pipeline; documented now
   max_daily_drawdown_pct: 3.0
   max_position_pct: 20.0
+  max_positions: 5             # slots to fund per cycle. The 20% cap above already implies
+                               # five, so this makes the implied number explicit and enforced:
+                               # ~500 names carry a live signal and only these many get funded.
+  hysteresis_rank: 10          # a held name keeps its slot while it still ranks this high, so
+                               # slipping from 5th to 6th does not sell it and buy it back
+                               # tomorrow. Newcomers must still rank inside max_positions.
   max_baseline_age_hours: 120  # skip the drawdown check when the previous equity snapshot
                                # is older than this. 120h clears a weekend (72h) and a
                                # holiday long weekend (96h); past that the gap is downtime,

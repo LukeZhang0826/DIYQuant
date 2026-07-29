@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS orders (
     symbol TEXT NOT NULL,
     qty INTEGER NOT NULL,
     submitted_date TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('accepted', 'filled')),
+    status TEXT NOT NULL CHECK (status IN ('accepted', 'filled', 'canceled')),
     fill_price REAL,
     fees REAL
 );
@@ -47,6 +47,7 @@ class SimulatedBroker:
         self._conn = sqlite3.connect(path)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate_orders_status()
         self._conn.execute(
             "INSERT OR IGNORE INTO account (id, cash) VALUES (1, ?)", (starting_cash,)
         )
@@ -54,6 +55,42 @@ class SimulatedBroker:
         self._bars = bars_by_symbol
         self._cost = cost_bps / 10_000
         self._slip = slippage_bps / 10_000
+
+    def _migrate_orders_status(self) -> None:
+        """Widen the orders.status CHECK on a database created before cancelling existed.
+
+        `CREATE TABLE IF NOT EXISTS` silently leaves an existing table alone, so
+        a file written by an older build still carries `CHECK (status IN
+        ('accepted','filled'))` and rejects a cancel with an IntegrityError.
+        SQLite cannot alter a constraint, so the table is rebuilt. Rows are
+        copied verbatim; only the constraint changes.
+        """
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'orders'"
+        ).fetchone()
+        if row is None or "'canceled'" in row["sql"]:
+            return
+
+        self._conn.executescript(
+            """
+            PRAGMA foreign_keys = OFF;
+            BEGIN;
+            CREATE TABLE orders_migrated (
+                id INTEGER PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                qty INTEGER NOT NULL,
+                submitted_date TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('accepted', 'filled', 'canceled')),
+                fill_price REAL,
+                fees REAL
+            );
+            INSERT INTO orders_migrated SELECT * FROM orders;
+            DROP TABLE orders;
+            ALTER TABLE orders_migrated RENAME TO orders;
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+            """
+        )
 
     def get_account(self) -> AccountState:
         cash = float(self._conn.execute("SELECT cash FROM account").fetchone()["cash"])
@@ -79,6 +116,21 @@ class SimulatedBroker:
         self._conn.commit()
         return OrderResult(broker_order_id=f"sim-{cur.lastrowid}", status="accepted")
 
+    def cancel_order(self, broker_order_id: str) -> None:
+        """Cancel an order that has not filled yet. Filled orders are immutable.
+
+        A market-on-open order rests until the next session, so there is a real
+        window in which the view that produced it can change. Without a way to
+        withdraw one, every order ever submitted eventually executes no matter
+        what the strategy now thinks.
+        """
+        order_id = int(broker_order_id.removeprefix("sim-"))
+        self._conn.execute(
+            "UPDATE orders SET status = 'canceled' WHERE id = ? AND status != 'filled'",
+            (order_id,),
+        )
+        self._conn.commit()
+
     def get_order_fill(self, broker_order_id: str) -> FillInfo:
         order_id = int(broker_order_id.removeprefix("sim-"))
         order = self._conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
@@ -90,6 +142,10 @@ class SimulatedBroker:
                 filled_qty=abs(order["qty"]),
                 avg_price=float(order["fill_price"]),
             )
+        # Checked before the fill path, not after: without this a canceled order
+        # would still fill on the next bar, which makes cancelling meaningless.
+        if order["status"] == "canceled":
+            return FillInfo(status="canceled", filled_qty=0, avg_price=0.0)
 
         bars = self._bars.get(order["symbol"])
         # No bars means the symbol could not be priced this cycle (e.g. a

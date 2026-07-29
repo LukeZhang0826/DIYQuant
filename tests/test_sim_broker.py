@@ -116,3 +116,73 @@ def test_equity_marks_positions_to_latest_close(tmp_path):
     broker2.get_order_fill(result.broker_order_id)
     account = broker2.get_account()
     assert abs(account.equity - (account.cash + 20 * 105.0)) < 1e-9
+
+
+def test_cancelled_order_never_fills(tmp_path):
+    """Without this, cancelling means nothing: the next bar fills it anyway."""
+    broker = make_broker(tmp_path, n_days=1)
+    order = broker.submit_market_order("AAPL", 10)
+
+    broker.cancel_order(order.broker_order_id)
+    broker._bars = {"AAPL": make_bars(5)}
+
+    fill = broker.get_order_fill(order.broker_order_id)
+    assert fill.status == "canceled"
+    assert fill.filled_qty == 0
+    assert broker.get_position("AAPL") == 0
+
+
+def test_cancelling_a_filled_order_leaves_it_filled(tmp_path):
+    broker = make_broker(tmp_path, n_days=5)
+    order = broker.submit_market_order("AAPL", 10)
+    broker._bars = {"AAPL": make_bars(6)}
+    assert broker.get_order_fill(order.broker_order_id).status == "filled"
+
+    broker.cancel_order(order.broker_order_id)
+    assert broker.get_order_fill(order.broker_order_id).status == "filled"
+
+
+def test_cancelling_twice_is_harmless(tmp_path):
+    broker = make_broker(tmp_path, n_days=1)
+    order = broker.submit_market_order("AAPL", 10)
+    broker.cancel_order(order.broker_order_id)
+    broker.cancel_order(order.broker_order_id)
+    assert broker.get_order_fill(order.broker_order_id).status == "canceled"
+
+
+def test_a_database_predating_cancellation_is_migrated(tmp_path):
+    """An older file carries a CHECK that rejects 'canceled' and cannot be altered."""
+    import sqlite3
+
+    path = tmp_path / "sim.sqlite"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE account (id INTEGER PRIMARY KEY, cash REAL NOT NULL);
+        CREATE TABLE positions (symbol TEXT PRIMARY KEY, qty INTEGER NOT NULL);
+        CREATE TABLE orders (
+            id INTEGER PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            qty INTEGER NOT NULL,
+            submitted_date TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('accepted', 'filled')),
+            fill_price REAL,
+            fees REAL
+        );
+        INSERT INTO account (id, cash) VALUES (1, 100000.0);
+        INSERT INTO orders (symbol, qty, submitted_date, status)
+            VALUES ('AAPL', 10, '2024-01-01', 'accepted');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    broker = SimulatedBroker(
+        path,
+        {"AAPL": make_bars(1)},
+        cost_bps=COST_BPS,
+        slippage_bps=SLIP_BPS,
+        starting_cash=100_000.0,
+    )
+    broker.cancel_order("sim-1")
+    assert broker.get_order_fill("sim-1").status == "canceled"

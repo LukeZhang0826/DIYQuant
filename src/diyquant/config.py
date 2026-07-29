@@ -45,6 +45,8 @@ class RiskConfig(BaseModel):
     max_daily_drawdown_pct: float
     max_position_pct: float
     max_baseline_age_hours: float = 120.0
+    max_positions: int = 5
+    hysteresis_rank: int = 10
 
 
 class ExecutionConfig(BaseModel):

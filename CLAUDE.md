@@ -51,11 +51,12 @@ src/diyquant/
   data/              # models (Bar, NewsItem), providers/ (yfinance, alpaca), store.py (parquet)
   signals/           # base protocol; technical/ (SMA crossover); sentiment/ (FinBERT + gate)
   backtest/          # vectorized engine with costs
-  risk/              # limits.py (kill-switch), sizing.py
+  risk/              # limits.py (kill-switch), sizing.py, selection.py (which signals get funded)
   execution/         # broker interface, simulated paper broker, ledger, pipeline
   alerts/            # discord.py: webhook heartbeat, never raises
 scripts/             # refresh_universe, backfill, run_backtest, run_live, score_news, report,
-                     # check_alerts (smoke-test the webhook), check_pulse (alert when not trading)
+                     # check_alerts (smoke-test the webhook), check_pulse (alert when not trading),
+                     # cancel_pending_orders (withdraw resting orders you no longer want)
 deploy/              # setup.sh, publish.sh, backup.sh, iam-policy.json (EC2 provisioning)
 docs/deploy.md       # the AWS runbook: read this before touching the box
 data/                # local parquet store + ledger.sqlite (gitignored)
@@ -113,16 +114,37 @@ silently turn a "3% daily drawdown" limit into "3% in 5 minutes", so a slow blee
 a session would never trip it. The kill-switch would still pass its tests and no longer
 protect anything. Anchor the baseline to the current trading day before changing cadence.
 
-## Known constraint: universe vs capital
+## Universe vs capital: resolved 2026-07-28 by the selection layer
 
 The universe is ~503 tickers but the account funds only about five positions
 (`starting_cash` 100k at `risk.max_position_pct` 20%). The SMA crossover, having no
 notion of magnitude, puts most of the universe into an active long/short state at once
 (measured 2026-07-22: 335 long, 166 short, 2 flat of 503), far more signals than capital
-can hold. There is no ranking/selection layer yet, so how `run_live.py` resolves "more
-signals than capital" is the decisive, and largely unexercised, behaviour at this scale.
-Understand it before trusting a large-universe cycle; a proper selection and sizing layer
-is Stage 4/7 in `docs/roadmap-vision.md`.
+can hold. The pipeline used to size **every** one of those at the full 20% cap and submit
+an order for each: the 2026-07-28 cycle queued 466 orders against funding for five, and
+which five you ended up holding was decided by dict iteration order.
+
+`risk/selection.py` now sits between the signal and sizing. It ranks the candidates that
+survived the sentiment gate and funds `risk.max_positions` (5) of them; everything else
+is targeted flat, which winds down a holding that lost its slot. Conviction comes from
+`SmaCrossover.strength()`, the gap between the two moving averages over the slow one,
+which is the magnitude the crossover already computes and used to throw away.
+`risk.hysteresis_rank` (10) lets an incumbent keep its slot while it still ranks that
+high, so a name slipping from 5th to 6th is not sold today and bought back tomorrow.
+
+Two things this exposed, worth remembering:
+
+- **The simulated broker applies no cash check.** `get_order_fill` fills unconditionally
+  on the next bar and lets cash go negative. It never "funds the first few and stops", so
+  over-submitting is not self-limiting. Selection is what bounds the book, not the broker.
+- **Orders rest until the next open, so a stale one still fills.** Selection does not
+  retract what is already at the broker. `SimulatedBroker.cancel_order()` and
+  `scripts/cancel_pending_orders.py` exist for that. The pipeline does **not** yet cancel
+  stale orders automatically: that is the remaining piece, since reconciliation happens
+  before selection, so yesterday's unwanted order fills before today's view is computed.
+
+A ranking layer that scores on something better than trend gap is still Stage 4/7 in
+`docs/roadmap-vision.md`; this is the deliberately simple version of it.
 
 ## Communication
 

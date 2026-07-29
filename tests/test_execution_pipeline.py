@@ -42,7 +42,7 @@ def make_bars(price: float) -> pd.DataFrame:
     return pd.DataFrame({"close": [price] * 5}, index=idx)
 
 
-def make_settings() -> Settings:
+def make_settings(**risk_overrides) -> Settings:
     return Settings(
         universe={"tickers": ["AAPL"]},
         data={"provider": "yfinance", "store_path": "data/bars", "start": "2018-01-01"},
@@ -56,8 +56,21 @@ def make_settings() -> Settings:
             "gate_threshold": 0.2,
             "sources": ["benzinga"],
         },
-        risk={"max_daily_drawdown_pct": 3.0, "max_position_pct": 20.0},
+        risk={"max_daily_drawdown_pct": 3.0, "max_position_pct": 20.0, **risk_overrides},
     )
+
+
+class PricedConviction:
+    """Constant target, conviction equal to the last close, so tests rank by price."""
+
+    def __init__(self, value: int):
+        self.value = value
+
+    def generate(self, bars: pd.DataFrame) -> pd.Series:
+        return pd.Series(self.value, index=bars.index)
+
+    def strength(self, bars: pd.DataFrame) -> float:
+        return float(bars["close"].iloc[-1])
 
 
 def hours_ago(hours: float) -> str:
@@ -291,3 +304,116 @@ def test_reconciles_pending_fill(tmp_path):
     assert ledger.pending_orders() == []
     assert ledger.position("AAPL") == 20
     assert order_id not in [row["id"] for row in ledger.pending_orders()]
+
+
+def priced(symbols: dict[str, float]) -> dict[str, pd.DataFrame]:
+    return {sym: make_bars(price) for sym, price in symbols.items()}
+
+
+def test_five_hundred_live_signals_fund_only_max_positions(tmp_path):
+    """The bug: ~500 names carry a signal, capital funds five, iteration order decided which."""
+    broker = FakeBroker(equity=100_000)
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+
+    report = run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol=priced({f"S{i:03d}": 100.0 for i in range(500)}),
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+    )
+
+    assert report.candidates == 500
+    assert report.selected == 5
+    assert len(broker.submitted) == 5
+    assert report.orders_submitted == 5
+
+
+def test_the_strongest_conviction_gets_funded(tmp_path):
+    broker = FakeBroker(equity=100_000)
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+
+    run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol=priced({"A": 60.0, "B": 50.0, "C": 40.0, "D": 30.0}),
+        strategy=PricedConviction(1),
+        strategy_name="priced",
+        settings=make_settings(max_positions=2),
+    )
+
+    assert sorted(sym for sym, _ in broker.submitted) == ["A", "B"]
+
+
+def test_a_holding_that_loses_its_slot_is_wound_down(tmp_path):
+    """Missing selection means flat, not "leave it alone"."""
+    broker = FakeBroker(equity=100_000, positions={"C": 500})
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+
+    run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol=priced({"A": 60.0, "B": 50.0, "C": 40.0}),
+        strategy=PricedConviction(1),
+        strategy_name="priced",
+        settings=make_settings(max_positions=1, hysteresis_rank=1),
+    )
+
+    assert ("C", -500) in broker.submitted
+
+
+def test_hysteresis_keeps_a_holding_that_slipped_one_place(tmp_path):
+    """F ranks 6th of 6 but is held, so it keeps its slot instead of churning."""
+    held_shares = int(100_000 * 0.20 / 10.0)
+    broker = FakeBroker(equity=100_000, positions={"F": held_shares})
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+
+    report = run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol=priced({"A": 60.0, "B": 50.0, "C": 40.0, "D": 30.0, "E": 20.0, "F": 10.0}),
+        strategy=PricedConviction(1),
+        strategy_name="priced",
+        settings=make_settings(max_positions=5, hysteresis_rank=10),
+    )
+
+    assert report.selected == 5
+    # Already at its target size and still funded, so it needs no order at all.
+    assert [sym for sym, _ in broker.submitted] == ["A", "B", "C", "D"]
+
+
+def test_without_the_buffer_the_same_holding_is_sold(tmp_path):
+    """The contrast that shows the buffer is doing the work."""
+    held_shares = int(100_000 * 0.20 / 10.0)
+    broker = FakeBroker(equity=100_000, positions={"F": held_shares})
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+
+    run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol=priced({"A": 60.0, "B": 50.0, "C": 40.0, "D": 30.0, "E": 20.0, "F": 10.0}),
+        strategy=PricedConviction(1),
+        strategy_name="priced",
+        settings=make_settings(max_positions=5, hysteresis_rank=5),
+    )
+
+    assert ("F", -held_shares) in broker.submitted
+
+
+def test_a_flipped_signal_is_not_protected_by_the_buffer(tmp_path):
+    """Held long, now short: that is a reversal on merit, not an incumbent to shelter."""
+    broker = FakeBroker(equity=100_000, positions={"C": 400})
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+
+    run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol=priced({"A": 60.0, "B": 50.0, "C": 40.0}),
+        strategy=PricedConviction(-1),
+        strategy_name="priced",
+        settings=make_settings(max_positions=2, hysteresis_rank=10),
+    )
+
+    submitted = dict(broker.submitted)
+    assert submitted["C"] == -400

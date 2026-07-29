@@ -16,3 +16,31 @@ class Signal(Protocol):
         Execution timing (T+1) is the backtester's/executor's responsibility.
         """
         ...
+
+
+class RankableSignal(Protocol):
+    """A Signal that can also say how strongly it believes its latest target."""
+
+    def strength(self, bars: pd.DataFrame) -> float:
+        """Non-negative conviction in the latest target, higher being stronger.
+
+        Scale is arbitrary and comparable only within one strategy, since it is
+        used to rank symbols against each other, never against a threshold.
+        """
+        ...
+
+
+def conviction(strategy: object, bars: pd.DataFrame) -> float:
+    """Conviction score for ranking, or 0.0 for a signal that offers none.
+
+    Deliberately optional rather than part of Signal. Ranking only matters when
+    there are more signals than capital, and a strategy that does not implement
+    it should still be tradable, as every one of them was before selection
+    existed. Such a strategy scores flat everywhere, so selection degrades to a
+    deterministic cap on how many positions are opened rather than a meaningful
+    ordering of them.
+    """
+    strength = getattr(strategy, "strength", None)
+    if strength is None:
+        return 0.0
+    return float(strength(bars))

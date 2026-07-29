@@ -7,7 +7,15 @@ Order of operations each cycle:
   4. Kill-switch: if equity dropped past the daily limit since the previous
      snapshot, halt, flatten every position, and stop. Skipped when that
      snapshot is too stale to stand in for the start of the trading day.
-  5. Per symbol: compute the signal, size it, cap-check it, submit the delta.
+  5. Signal and sentiment-gate every tradable symbol.
+  6. Select which of those signals get funded (risk/selection.py). The universe
+     is far larger than capital: ~500 names carry a live signal and about five
+     can be held, so without this step the book is decided by iteration order.
+  7. Per symbol: size the selected target (flat if it missed selection, which
+     winds down a position we hold but no longer rank), cap-check, submit.
+
+Steps 5 and 6 are separate passes because selection has to see every signal
+before it can rank any of them.
 
 `bars_by_symbol` may hold more symbols than `tradable` covers: a ticker that
 left the universe (S&P 500 turnover) while we still hold it or have an open
@@ -27,8 +35,9 @@ from diyquant.config import Settings
 from diyquant.execution.base import Broker
 from diyquant.execution.ledger import Ledger
 from diyquant.risk.limits import check_daily_drawdown, check_position_cap
+from diyquant.risk.selection import select_positions
 from diyquant.risk.sizing import target_shares
-from diyquant.signals.base import Signal
+from diyquant.signals.base import Signal, conviction
 from diyquant.signals.sentiment.filter import apply_sentiment_gate
 
 
@@ -39,18 +48,26 @@ class CycleReport:
     orders_submitted: int = 0
     orders_blocked: int = 0
     gates_fired: int = 0
+    candidates: int = 0
+    selected: int = 0
     notes: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         lines = [
             f"halted           : {self.halted}",
             f"fills reconciled : {self.fills_reconciled}",
+            f"live signals     : {self.candidates}",
+            f"positions funded : {self.selected}",
             f"orders submitted : {self.orders_submitted}",
             f"orders blocked   : {self.orders_blocked}",
             f"sentiment vetoes : {self.gates_fired}",
         ]
         lines += self.notes
         return "\n".join(lines)
+
+
+def _sign(qty: int) -> int:
+    return (qty > 0) - (qty < 0)
 
 
 def _hours_since(ts: str) -> float:
@@ -143,6 +160,9 @@ def run_once(
                 report.notes.append(f"KILL SWITCH: {decision.reason}")
                 return report
 
+    targets: dict[str, int] = {}
+    scores: dict[str, float] = {}
+
     for symbol, bars in bars_by_symbol.items():
         if tradable is not None and symbol not in tradable:
             # Loaded only so steps 1-4 could reconcile and value it; a ticker
@@ -170,9 +190,34 @@ def run_once(
             if gate_reason:
                 report.notes.append(f"{symbol}: {gate_reason}")
                 report.gates_fired += 1
+
+        targets[symbol] = target
+        if target != 0:
+            scores[symbol] = conviction(strategy, bars)
+
+    # An incumbent is a live signal we already hold in the same direction. A
+    # position whose signal has flipped is not one: it should be closed or
+    # reversed on merit, not protected by the hysteresis buffer.
+    held = {s for s, t in targets.items() if t != 0 and _sign(broker.get_position(s)) == t}
+    selected = select_positions(
+        scores=scores,
+        held=held,
+        max_positions=risk_cfg.max_positions,
+        hysteresis_rank=risk_cfg.hysteresis_rank,
+    )
+    report.candidates = len(scores)
+    report.selected = len(selected)
+    if selected:
+        report.notes.append("funded: " + ", ".join(sorted(selected)))
+
+    for symbol, target in targets.items():
+        bars = bars_by_symbol[symbol]
+        # Missing selection means flat, not "leave it alone": that is what winds
+        # down a position we still like but no longer rank highly enough to fund.
+        effective = target if symbol in selected else 0
         price = float(bars["close"].iloc[-1])
         shares = target_shares(
-            target=target,
+            target=effective,
             equity=account.equity,
             price=price,
             max_position_pct=risk_cfg.max_position_pct,
@@ -193,7 +238,7 @@ def run_once(
                 side=side,
                 qty=abs(delta),
                 signal_name=strategy_name,
-                signal_value=target,
+                signal_value=effective,
                 status="blocked",
                 risk_reason=cap.reason,
             )
@@ -206,7 +251,7 @@ def run_once(
             side=side,
             qty=abs(delta),
             signal_name=strategy_name,
-            signal_value=target,
+            signal_value=effective,
             status="submitted",
             broker_order_id=result.broker_order_id,
         )
