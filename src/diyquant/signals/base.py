@@ -44,3 +44,18 @@ def conviction(strategy: object, bars: pd.DataFrame) -> float:
     if strength is None:
         return 0.0
     return float(strength(bars))
+
+
+def conviction_series(strategy: object, bars: pd.DataFrame) -> pd.Series:
+    """Conviction at every bar, or a flat zero series for a strategy offering none.
+
+    Same optional contract as `conviction`, in the shape a backtest needs. Asking
+    a strategy for its latest conviction once per historical bar would re-derive
+    the whole rolling computation every time, so ranking a 500-name universe
+    across years is only tractable if the strategy can hand over the series it
+    already computes internally.
+    """
+    series = getattr(strategy, "strength_series", None)
+    if series is None:
+        return pd.Series(0.0, index=bars.index)
+    return series(bars).astype(float)

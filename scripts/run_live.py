@@ -40,11 +40,17 @@ def make_broker(settings: Settings, bars_by_symbol: dict[str, pd.DataFrame]) -> 
     raise ValueError(f"unknown broker: {settings.execution.broker}")
 
 
-def fetch_sentiment_scores(settings: Settings) -> dict[str, float | None]:
+def fetch_sentiment_scores(settings: Settings, ledger: Ledger) -> dict[str, float | None]:
     """Score recent whitelisted news per ticker; None entries mean 'no signal'.
 
     A news/model failure must not strand the whole cycle: fall back to
     ungated (score None) and say so on stdout.
+
+    Every scored headline is archived on the way past, whitelisted or not. The
+    whitelist is a tuning decision, and a record that only kept what today's
+    settings happened to admit could never be used to question them. It is also
+    the only history that will ever exist: yfinance serves recent news only, so
+    nothing can backfill what was not captured on the day.
     """
     from diyquant.data.providers.yfinance_news import YFinanceNewsProvider
     from diyquant.signals.sentiment.finbert import FinbertScorer
@@ -53,6 +59,7 @@ def fetch_sentiment_scores(settings: Settings) -> dict[str, float | None]:
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=cfg.lookback_hours)
     scores: dict[str, float | None] = {}
+    archived = 0
     try:
         provider = YFinanceNewsProvider()
         scorer = FinbertScorer()
@@ -63,10 +70,19 @@ def fetch_sentiment_scores(settings: Settings) -> dict[str, float | None]:
                 ScoredHeadline(ts=i.ts, source=i.source, score=s)
                 for i, s in zip(items, headline_scores)
             ]
+            if items:
+                archived += ledger.record_news_scores(
+                    ticker,
+                    [
+                        (i.ts.isoformat(), i.source, i.headline, s)
+                        for i, s in zip(items, headline_scores)
+                    ],
+                )
             scores[ticker] = aggregate_sentiment(scored, now, cfg.half_life_hours, cfg.sources)
     except Exception as exc:  # noqa: BLE001 - degrade to ungated, never skip the cycle
         print(f"sentiment unavailable, trading ungated: {exc}")
         return {t: None for t in settings.universe["tickers"]}
+    print(f"archived {archived} new headlines")
     return scores
 
 
@@ -101,7 +117,7 @@ def main() -> None:
 
     sentiment_scores = None
     if settings.sentiment.enabled:
-        sentiment_scores = fetch_sentiment_scores(settings)
+        sentiment_scores = fetch_sentiment_scores(settings, ledger)
 
     report = run_once(
         broker=broker,

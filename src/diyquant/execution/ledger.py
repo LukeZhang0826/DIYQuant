@@ -48,6 +48,16 @@ CREATE TABLE IF NOT EXISTS halts (
     reason TEXT NOT NULL,
     cleared_at TEXT
 );
+CREATE TABLE IF NOT EXISTS news_scores (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    published_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    score REAL NOT NULL,
+    UNIQUE (symbol, published_at, headline)
+);
 CREATE TABLE IF NOT EXISTS sentiment_gates (
     id INTEGER PRIMARY KEY,
     ts TEXT NOT NULL,
@@ -194,6 +204,41 @@ class Ledger:
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    # -- news archive ------------------------------------------------------
+
+    def record_news_scores(self, symbol: str, scored: list[tuple[str, str, str, float]]) -> int:
+        """Archive scored headlines as (published_at, source, headline, score) tuples.
+
+        The gate cannot be backtested without this. yfinance serves only recent
+        news and nothing reconstructs what FinBERT would have said in 2019, so
+        the only history that will ever exist is the history collected from now
+        on, and every day this does not run is a day that cannot be recovered.
+        Note it is driven from the gate's own fetch, so turning `sentiment.enabled`
+        off stops the archive too: that is a gap to close before ever disabling it
+        for a stretch, not a property to rely on.
+
+        Deliberately stored raw, one row per headline, rather than as the decayed
+        aggregate the gate consumes. The aggregate depends on half_life_hours and
+        the source whitelist, and tuning those is exactly the experiment this
+        archive is meant to enable: storing only the output would bake today's
+        settings into the record permanently.
+
+        Idempotent on (symbol, published_at, headline). The lookback window
+        overlaps between cycles, so the same headline arrives repeatedly and must
+        not be double-counted as fresh evidence.
+        """
+        rows = [(_now(), symbol, pub, src, head, score) for pub, src, head, score in scored]
+        cur = self._conn.executemany(
+            "INSERT OR IGNORE INTO news_scores (ts, symbol, published_at, source,"
+            " headline, score) VALUES (?,?,?,?,?,?)",
+            rows,
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def news_scores(self) -> list[sqlite3.Row]:
+        return self._conn.execute("SELECT * FROM news_scores ORDER BY id").fetchall()
 
     def sentiment_gates(self) -> list[sqlite3.Row]:
         return self._conn.execute("SELECT * FROM sentiment_gates ORDER BY id").fetchall()
