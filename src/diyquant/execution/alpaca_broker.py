@@ -51,3 +51,17 @@ class AlpacaBroker:
             filled_qty=int(float(order.filled_qty or 0)),
             avg_price=float(order.filled_avg_price or 0.0),
         )
+
+    def cancel_order(self, broker_order_id: str) -> None:
+        """Swallow APIError: Alpaca 422s an order that already filled or cancelled.
+
+        The pipeline cancels whatever the ledger still calls pending, and the
+        ledger can lag the broker by a cycle, so being told the order is already
+        finished is an expected answer here rather than a failure. Anything else
+        would abort the cycle over an order that is already in the state we
+        wanted it in.
+        """
+        try:
+            self._client.cancel_order_by_id(broker_order_id)
+        except APIError:
+            pass

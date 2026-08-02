@@ -2,20 +2,28 @@
 
 Order of operations each cycle:
   1. Reconcile fills for orders submitted in earlier cycles.
-  2. Snapshot account equity.
-  3. If a halt is active, stop here (a human must clear it).
-  4. Kill-switch: if equity dropped past the daily limit since the previous
+  2. Cancel whatever is still resting after step 1 (see below).
+  3. Snapshot account equity.
+  4. If a halt is active, stop here (a human must clear it).
+  5. Kill-switch: if equity dropped past the daily limit since the previous
      snapshot, halt, flatten every position, and stop. Skipped when that
      snapshot is too stale to stand in for the start of the trading day.
-  5. Signal and sentiment-gate every tradable symbol.
-  6. Select which of those signals get funded (risk/selection.py). The universe
+  6. Signal and sentiment-gate every tradable symbol.
+  7. Select which of those signals get funded (risk/selection.py). The universe
      is far larger than capital: ~500 names carry a live signal and about five
      can be held, so without this step the book is decided by iteration order.
-  7. Per symbol: size the selected target (flat if it missed selection, which
+  8. Per symbol: size the selected target (flat if it missed selection, which
      winds down a position we hold but no longer rank), cap-check, submit.
 
-Steps 5 and 6 are separate passes because selection has to see every signal
+Steps 6 and 7 are separate passes because selection has to see every signal
 before it can rank any of them.
+
+Step 2 must follow step 1, never precede it. An order submitted last cycle is
+*expected* to be resting: it fills at the next open, which step 1 is what
+records. Cancelling before reconciling would withdraw every order the cycle
+before it could ever execute, and the pipeline would submit forever and trade
+never. What survives step 1 is the genuinely stale set, and in a healthy cycle
+that set is empty.
 
 `bars_by_symbol` may hold more symbols than `tradable` covers: a ticker that
 left the universe (S&P 500 turnover) while we still hold it or have an open
@@ -45,6 +53,7 @@ from diyquant.signals.sentiment.filter import apply_sentiment_gate
 class CycleReport:
     halted: bool = False
     fills_reconciled: int = 0
+    orders_cancelled: int = 0
     orders_submitted: int = 0
     orders_blocked: int = 0
     gates_fired: int = 0
@@ -56,6 +65,7 @@ class CycleReport:
         lines = [
             f"halted           : {self.halted}",
             f"fills reconciled : {self.fills_reconciled}",
+            f"orders cancelled : {self.orders_cancelled}",
             f"live signals     : {self.candidates}",
             f"positions funded : {self.selected}",
             f"orders submitted : {self.orders_submitted}",
@@ -90,6 +100,58 @@ def _reconcile_fills(broker: Broker, ledger: Ledger, report: CycleReport) -> Non
         elif fill.status in ("canceled", "expired", "rejected"):
             ledger.update_order_status(order["id"], "canceled")
             report.notes.append(f"order {order['id']} {order['symbol']}: {fill.status}")
+
+
+def _cancel_stale_orders(
+    broker: Broker, ledger: Ledger, report: CycleReport, reconsidered: set[str]
+) -> None:
+    """Withdraw resting orders this cycle is about to reconsider.
+
+    An order still pending at this point did not execute at the open. It rests
+    into the next session carrying a rationale this cycle recomputes from
+    scratch, and since the cycle resubmits whatever it still wants, leaving it
+    is not preserving that intent: it holds a second, older opinion alongside
+    today's.
+
+    The concrete damage is double-sizing. Step 8 sizes from the broker's
+    *position*, which does not count resting orders, so an unfilled buy left
+    alone gets a fresh buy stacked on top of it and both eventually fill. The
+    simulated broker applies no cash check, so nothing downstream catches it.
+
+    `reconsidered` is the invariant that makes this safe: never withdraw an
+    order the cycle cannot replace. Only symbols that reach step 8 get a fresh
+    target, so cancelling outside that set removes intent with nothing put back.
+    A demoted ticker is the case that matters. Its bars stay loaded so its exit
+    can fill, but it gets no new signal, so cancelling its resting sell would
+    strand the position with no way out and no order left to carry it.
+    Unpriceable orphans stay pending for a human, as run_live.py documents.
+
+    This cannot un-fill an order that already executed at today's open. That
+    fill happened hours before this cycle runs, and retracting it afterwards
+    would be look-ahead: acting on the close to undo a trade made at the open.
+    Reconciliation records those first, deliberately, and only what is still
+    genuinely resting is withdrawn here.
+
+    Cancels at the broker before marking the ledger, matching
+    scripts/cancel_pending_orders.py: an interruption then leaves an order the
+    ledger still calls pending, which the next cycle retries, rather than a fill
+    the ledger has lost sight of.
+    """
+    left = []
+    for order in ledger.pending_orders():
+        if order["symbol"] not in reconsidered:
+            left.append(order["symbol"])
+            continue
+        if order["broker_order_id"]:
+            broker.cancel_order(order["broker_order_id"])
+        ledger.update_order_status(order["id"], "canceled")
+        report.orders_cancelled += 1
+    if report.orders_cancelled:
+        report.notes.append(f"cancelled {report.orders_cancelled} stale order(s) that never filled")
+    if left:
+        # Surfaced rather than silent: these can only clear by hand, so a
+        # growing list here is the signal that one needs attention.
+        report.notes.append("left pending, not reconsidered this cycle: " + ", ".join(sorted(left)))
 
 
 def _flatten_all(
@@ -127,6 +189,12 @@ def run_once(
     risk_cfg = settings.risk
 
     _reconcile_fills(broker, ledger, report)
+    # The symbols that will reach step 8 and so can be re-ordered if still
+    # wanted. Set math only: this must not depend on running the signals.
+    reconsidered = {s for s in bars_by_symbol if tradable is None or s in tradable}
+    # Before the halt check on purpose: a halted pipeline must not leave live
+    # orders resting at the broker while it waits for a human.
+    _cancel_stale_orders(broker, ledger, report, reconsidered)
 
     account = broker.get_account()
     baseline = ledger.last_equity_snapshot()

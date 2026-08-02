@@ -140,9 +140,32 @@ Two things this exposed, worth remembering:
   over-submitting is not self-limiting. Selection is what bounds the book, not the broker.
 - **Orders rest until the next open, so a stale one still fills.** Selection does not
   retract what is already at the broker. `SimulatedBroker.cancel_order()` and
-  `scripts/cancel_pending_orders.py` exist for that. The pipeline does **not** yet cancel
-  stale orders automatically: that is the remaining piece, since reconciliation happens
-  before selection, so yesterday's unwanted order fills before today's view is computed.
+  `scripts/cancel_pending_orders.py` exist for that.
+
+## Stale order cancellation: resolved 2026-08-01 in the pipeline
+
+`run_once()` now withdraws resting orders itself, as step 2, and the ordering is the whole
+design. It runs **after** reconciliation, never before: an order submitted last cycle is
+*supposed* to be resting, since it fills at the next open and reconciliation is what records
+that. Cancelling first would withdraw every order the cycle before it could ever execute, and
+the pipeline would submit forever and trade never. What survives reconciliation is the
+genuinely stale set, and on a healthy day that set is empty.
+
+It cannot undo a fill that already happened at this morning's open. That trade is hours old by
+the time the 23:00 cycle runs, and retracting it on the close would be look-ahead. Automatic
+cancellation covers orders that rest *across* cycles; `scripts/cancel_pending_orders.py` is
+still the tool for the same-evening case, before the next open.
+
+One invariant bounds it: **never withdraw an order the cycle cannot replace.** Only symbols
+that reach the sizing step get a fresh target, so cancelling outside that set removes intent
+with nothing put back. A demoted ticker is the case that matters: its bars stay loaded so its
+exit can fill, but it gets no new signal, so cancelling its resting sell would strand the
+position with no order to close it. Those are reported in the cycle notes and still clear by
+hand, as `run_live.py` documents.
+
+Why it matters beyond tidiness: sizing computes `delta` from the broker's *position*, which
+does not count resting orders. An unfilled buy left alone gets an identical buy stacked on it
+the next cycle and both eventually fill, doubling the position past the cap meant to bound it.
 
 A ranking layer that scores on something better than trend gap is still Stage 4/7 in
 `docs/roadmap-vision.md`; this is the deliberately simple version of it.

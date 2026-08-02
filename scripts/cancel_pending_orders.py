@@ -10,6 +10,14 @@ That is exactly what the 2026-07-28 cycle queued, 466 orders against funding for
 five, before the selection layer existed. Adding selection does not retract
 orders already sitting at the broker, so they have to be cancelled explicitly.
 
+Still needed after `run_once` learned to cancel for itself, because the two cover
+different windows. The pipeline withdraws orders that rest *across* cycles, which
+it can only do at the next cycle, by which time the open has already been and
+gone. This is the tool for the window in between: a cycle has just submitted
+something you do not want, and you have until the next open to pull it. It also
+reaches orders the pipeline deliberately leaves alone, the ones on symbols it
+could not reconsider.
+
 Cancels at the broker first and only then marks the ledger, so an interruption
 leaves orders the ledger still calls pending rather than fills the ledger has
 lost sight of. Re-running is safe: an already-cancelled order cancels again to

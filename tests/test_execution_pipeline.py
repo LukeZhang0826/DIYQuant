@@ -6,6 +6,7 @@ from diyquant.config import Settings
 from diyquant.execution.base import AccountState, FillInfo, OrderResult
 from diyquant.execution.ledger import Ledger
 from diyquant.execution.pipeline import run_once
+from diyquant.execution.sim_broker import SimulatedBroker
 
 
 class FakeBroker:
@@ -14,6 +15,7 @@ class FakeBroker:
         self.positions = dict(positions or {})
         self.fills = dict(fills or {})
         self.submitted: list[tuple[str, int]] = []
+        self.cancelled: list[str] = []
 
     def get_account(self):
         return AccountState(cash=self.equity, equity=self.equity)
@@ -27,6 +29,9 @@ class FakeBroker:
 
     def get_order_fill(self, broker_order_id):
         return self.fills[broker_order_id]
+
+    def cancel_order(self, broker_order_id):
+        self.cancelled.append(broker_order_id)
 
 
 class ConstantSignal:
@@ -417,3 +422,274 @@ def test_a_flipped_signal_is_not_protected_by_the_buffer(tmp_path):
 
     submitted = dict(broker.submitted)
     assert submitted["C"] == -400
+
+
+# -- stale order cancellation ---------------------------------------------
+
+
+def pending(ledger, symbol="AAPL", qty=20, broker_order_id="abc"):
+    """Record an order the ledger believes is still resting at the broker."""
+    return ledger.record_order(
+        symbol=symbol,
+        side="buy",
+        qty=qty,
+        signal_name="constant",
+        signal_value=1,
+        status="submitted",
+        broker_order_id=broker_order_id,
+    )
+
+
+def test_an_order_that_never_filled_is_cancelled(tmp_path):
+    """The whole point: an order resting with a rationale this cycle recomputes."""
+    broker = FakeBroker(
+        equity=10_000,
+        fills={"abc": FillInfo(status="accepted", filled_qty=0, avg_price=0.0)},
+    )
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    order_id = pending(ledger)
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert broker.cancelled == ["abc"]
+    assert report.orders_cancelled == 1
+    status = ledger._conn.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()[
+        "status"
+    ]
+    assert status == "canceled"
+    # This cycle then submits its own order, so pending is not empty: what
+    # matters is that the withdrawn one is no longer in it.
+    assert order_id not in [row["id"] for row in ledger.pending_orders()]
+
+
+def test_a_reconciled_fill_is_not_cancelled(tmp_path):
+    """Cancelling must run after reconciliation, never instead of it.
+
+    An order that filled at today's open is a completed trade hours older than
+    this cycle. Withdrawing it here would be look-ahead, and would also lose the
+    fill the ledger needs to derive the position.
+    """
+    broker = FakeBroker(
+        equity=10_000,
+        positions={"AAPL": 20},
+        fills={"abc": FillInfo(status="filled", filled_qty=20, avg_price=101.0)},
+    )
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    pending(ledger)
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert broker.cancelled == []
+    assert report.orders_cancelled == 0
+    assert report.fills_reconciled == 1
+    assert ledger.position("AAPL") == 20
+
+
+def test_a_healthy_cycle_cancels_nothing(tmp_path):
+    """Guards the ordering from the other side.
+
+    Cancelling before reconciling would withdraw every order the cycle before it
+    could fill, and the pipeline would submit forever and trade never. In a
+    cycle where everything filled, nothing may be cancelled.
+    """
+    broker = FakeBroker(
+        equity=10_000,
+        positions={"AAPL": 20},
+        fills={
+            "a1": FillInfo(status="filled", filled_qty=10, avg_price=100.0),
+            "a2": FillInfo(status="filled", filled_qty=10, avg_price=100.0),
+        },
+    )
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    pending(ledger, qty=10, broker_order_id="a1")
+    pending(ledger, qty=10, broker_order_id="a2")
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert report.fills_reconciled == 2
+    assert report.orders_cancelled == 0
+    assert broker.cancelled == []
+
+
+def test_an_unfilled_order_does_not_get_a_second_one_stacked_on_it(tmp_path):
+    """The concrete damage cancelling prevents.
+
+    Sizing works off the broker's position, which does not count resting orders.
+    Left alone, an unfilled buy for the full target gets an identical buy added
+    this cycle and both eventually fill, doubling the position past the cap that
+    was supposed to bound it.
+    """
+    broker = FakeBroker(
+        equity=10_000,
+        positions={"AAPL": 0},  # the resting buy has not filled, so still flat
+        fills={"abc": FillInfo(status="accepted", filled_qty=0, avg_price=0.0)},
+    )
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    pending(ledger, qty=20)
+
+    run(broker, ledger, target=1, price=100.0)
+
+    # 20% of 10,000 at 100.0 is 20 shares: this cycle's order, and only it.
+    assert broker.submitted == [("AAPL", 20)]
+    assert broker.cancelled == ["abc"]
+
+
+def test_a_halted_cycle_still_withdraws_resting_orders(tmp_path):
+    """A halt stops trading; it must not leave live orders behind to fill anyway."""
+    broker = FakeBroker(
+        equity=10_000,
+        fills={"abc": FillInfo(status="accepted", filled_qty=0, avg_price=0.0)},
+    )
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    pending(ledger)
+    ledger.trigger_halt("manual")
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert report.halted is True
+    assert report.orders_cancelled == 1
+    assert broker.cancelled == ["abc"]
+    assert broker.submitted == []
+
+
+def test_a_blocked_order_is_never_cancelled(tmp_path):
+    """Blocked orders never reached the broker, so there is nothing to withdraw.
+
+    They carry no broker_order_id, and cancelling one would rewrite a risk
+    decision the ledger keeps as a record.
+    """
+    broker = FakeBroker(equity=10_000)
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    ledger.record_order(
+        symbol="AAPL",
+        side="buy",
+        qty=20,
+        signal_name="constant",
+        signal_value=1,
+        status="blocked",
+        risk_reason="position cap",
+    )
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert report.orders_cancelled == 0
+    assert broker.cancelled == []
+
+
+def make_ohlc(prices: list[float]) -> pd.DataFrame:
+    idx = pd.date_range("2024-01-01", periods=len(prices), freq="B")
+    return pd.DataFrame({"open": prices, "close": prices}, index=idx)
+
+
+def cycle(sim_path, ledger, bars, target=1):
+    """One cycle against the real simulated broker, rebuilt per cycle as run_live does."""
+    broker = SimulatedBroker(
+        sim_path, bars, cost_bps=5, slippage_bps=2, starting_cash=10_000
+    )
+    report = run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol=bars,
+        strategy=ConstantSignal(target),
+        strategy_name="constant",
+        settings=make_settings(),
+    )
+    position = broker.get_position("AAPL")
+    broker.close()
+    return report, position
+
+
+def test_an_order_still_fills_across_two_real_cycles(tmp_path):
+    """Integration guard against strangling the trading loop.
+
+    FakeBroker cannot show this: it does not model an order resting until a bar
+    later than its submission appears. Cycle one submits, cycle two sees a newer
+    bar and fills. Were cancelling ever to move ahead of reconciliation, cycle
+    two would withdraw the order instead, and the pipeline would submit forever
+    and trade never while every unit test above still passed.
+    """
+    sim_path = tmp_path / "sim.sqlite"
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    prices = [100.0] * 5
+
+    first, position = cycle(sim_path, ledger, {"AAPL": make_ohlc(prices)})
+    assert first.orders_submitted == 1
+    assert first.orders_cancelled == 0
+    assert position == 0  # resting, not yet filled
+
+    # Next session: one more bar exists, so the resting order can execute.
+    second, position = cycle(sim_path, ledger, {"AAPL": make_ohlc(prices + [100.0])})
+    assert second.fills_reconciled == 1
+    assert second.orders_cancelled == 0
+    assert position == 20
+    assert ledger.position("AAPL") == 20
+
+
+def test_an_order_the_cycle_cannot_replace_is_left_alone(tmp_path):
+    """The invariant: never withdraw an order nothing will put back.
+
+    A ticker with no bars this cycle never reaches the sizing loop, so no
+    replacement order can be issued for it. Cancelling would remove the only
+    live intent for that symbol and leave any position stranded, which is why
+    run_live.py deliberately leaves unpriceable orphans for a human.
+    """
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    order_id = ledger.record_order(
+        symbol="DELISTED",
+        side="sell",
+        qty=10,
+        signal_name="constant",
+        signal_value=0,
+        status="submitted",
+        broker_order_id="sim-1",
+    )
+    broker = FakeBroker(
+        equity=10_000,
+        fills={"sim-1": FillInfo(status="accepted", filled_qty=0, avg_price=0.0)},
+    )
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert broker.cancelled == []
+    assert report.orders_cancelled == 0
+    assert order_id in [row["id"] for row in ledger.pending_orders()]
+    assert any("left pending" in note for note in report.notes)
+
+
+def test_a_demoted_tickers_exit_order_is_not_withdrawn(tmp_path):
+    """The regression the invariant exists to prevent.
+
+    A ticker that left the universe keeps its bars so its exit can fill, but
+    gets no fresh signal, so it never re-enters the sizing loop. Cancelling its
+    resting sell would leave the position held with no order to close it and
+    nothing that would ever issue one.
+    """
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    order_id = ledger.record_order(
+        symbol="SPY",
+        side="sell",
+        qty=26,
+        signal_name="constant",
+        signal_value=0,
+        status="submitted",
+        broker_order_id="sim-6",
+    )
+    broker = FakeBroker(
+        equity=10_000,
+        positions={"SPY": 26},
+        fills={"sim-6": FillInfo(status="accepted", filled_qty=0, avg_price=0.0)},
+    )
+
+    report = run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol={"AAPL": make_bars(100.0), "SPY": make_bars(500.0)},
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+        tradable={"AAPL"},
+    )
+
+    assert broker.cancelled == []
+    assert report.orders_cancelled == 0
+    assert order_id in [row["id"] for row in ledger.pending_orders()]

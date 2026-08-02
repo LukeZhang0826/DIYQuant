@@ -41,3 +41,15 @@ class Broker(Protocol):
     def get_order_fill(self, broker_order_id: str) -> FillInfo:
         """Current status and fill details for a previously submitted order."""
         ...
+
+    def cancel_order(self, broker_order_id: str) -> None:
+        """Withdraw an order that has not filled. Filled orders are immutable.
+
+        Part of the interface rather than one broker's extra, because the
+        pipeline cancels every cycle: a broker that cannot withdraw a resting
+        order cannot be swapped in without silently changing what the pipeline
+        does. Must tolerate being called on an order that already filled or was
+        already cancelled, since it runs on whatever the ledger still believes
+        is pending.
+        """
+        ...
