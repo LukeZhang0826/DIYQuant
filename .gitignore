@@ -36,3 +36,7 @@ notebooks/*.ipynb_checkpoints/
 # OS
 .DS_Store
 Thumbs.db
+
+# Crash dumps from the MSYS/Git Bash shell on Windows. Regenerated on any crash,
+# never project content.
+*.stackdump
