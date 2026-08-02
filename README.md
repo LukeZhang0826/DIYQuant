@@ -88,7 +88,8 @@ python -m venv .venv
 pip install -e ".[dev]"
 
 python scripts/backfill.py       # pull daily bars for the configured universe
-python scripts/run_backtest.py   # SMA crossover backtest, costs included
+python scripts/run_backtest.py   # SMA crossover backtest, one ticker, costs included
+python scripts/validate.py       # walk-forward out-of-sample score for the whole pipeline
 python scripts/report.py         # render the dashboard from the local ledger
 pytest
 ```
@@ -104,6 +105,8 @@ Phase 1 needs no keys.
 | `run_live.py` | One trading cycle: signal → risk → execution |
 | `score_news.py` | Score headlines through FinBERT |
 | `report.py` | Render `index.html` and `state.json` from the ledger |
+| `validate.py` | Walk-forward out-of-sample report card for a config |
+| `ablate.py` | Measure whether selection, hysteresis and the short leg earn their place |
 | `check_alerts.py` | Prove the alerting path end to end; exits non-zero on failure |
 | `check_pulse.py` | Alert to Discord when the pipeline is not trading; silent otherwise |
 | `cancel_pending_orders.py` | Withdraw resting orders you no longer want filled |
@@ -119,18 +122,27 @@ moves the open question rather than closing it: the layer reliably picks five, a
 whether *those* five are the right five is unproven.
 
 Treat the equity curve as evidence the machinery works, not as evidence the strategy
-makes money. An SMA crossover has no notion of magnitude, so the gap between its
-averages is a proxy for conviction, not a measured edge; a wide gap can equally mean
-the move has already happened. Separating a real edge from that is exactly what the
-validation work ahead is for. That distinction is the point.
+makes money. That was the standing caveat; as of 2026-08-01 it is a measured fact.
+
+**The strategy loses to buying the index and doing nothing.** Walk-forward, out-of-sample,
+over the full S&P 500: **+93.3% against +112.1%** for the equal-weight universe, at a 49%
+drawdown. Numbers, method and caveats in [`docs/baseline.md`](docs/baseline.md);
+`python scripts/validate.py` reproduces it.
+
+That is the harness working, not the project failing. The shape underneath is informative:
+it earns its keep when the market falls (2022: +35.8% against a -10.1% market) and bleeds
+in bull years. Component ablations then found persistent stock-picking alpha (~33-36%)
+wrapped in an accidental **-0.66 beta**, because the ranking metric takes an absolute value
+and so shorts high-beta names by construction. The defect is portfolio construction rather
+than the signal, which is why market-neutral work is next.
 
 What the track record *can* support, honestly:
 
 - the pipeline runs unattended without losing days
 - risk limits fire when they should
 - backtest and live execution agree
-- the sentiment gate fires at a defensible rate (one evaluation per ticker per cycle,
-  so across ~500 tickers this becomes answerable within weeks, not years)
+- selection earns its place (alpha decays monotonically as position slots widen)
+- the strategy has been measured rather than assumed, and the answer is written down
 
 ## Roadmap
 
@@ -144,12 +156,21 @@ What the track record *can* support, honestly:
       run stays cheap at scale
 - [x] **Selection**: rank the ~470 daily signals and fund `risk.max_positions` of
       them, with a hysteresis buffer so a name slipping one place is not sold and
-      rebought. Ranking on trend gap is deliberately the simple version; a better
-      score is Stage 4/7 in [`docs/roadmap-vision.md`](docs/roadmap-vision.md)
+      rebought. Since measured: the ranking earns its place, the hysteresis buffer
+      does not
+- [x] **Stale order cancellation**: the cycle withdraws resting orders it no longer
+      wants, after reconciliation and only for symbols it can reconsider, so an
+      unfilled order cannot have a second one stacked on top of it
+- [x] **Validation harness** (roadmap Stage 1): walk-forward out-of-sample scoring of
+      the pipeline as it actually runs, a report card with alpha and beta, and a
+      written baseline to beat in [`docs/baseline.md`](docs/baseline.md)
+- [ ] **Market-neutral** (roadmap Stage 5, next): the book carries real alpha inside an
+      unmanaged -0.66 beta. Make exposure a choice rather than a by-product
+- [ ] **Sentiment as a signal** (Stage 2, blocked): needs months of archived news before
+      the gate can be evaluated at all. `news_scores` began collecting 2026-08-01
 - [ ] **Phase 4**: intraday cadence, a signal that defines "notable", reworked
       drawdown baseline, and a data source that supports intraday backtesting.
-      Sequenced in [`docs/roadmap-vision.md`](docs/roadmap-vision.md), which moves
-      cadence later, behind sentiment, validation, and market-neutral work
+      Sequenced last in [`docs/roadmap-vision.md`](docs/roadmap-vision.md)
 
 Phase 4 note: the daily drawdown kill-switch currently compares against the previous
 cycle's equity snapshot. At daily cadence that is the previous day, which is correct.

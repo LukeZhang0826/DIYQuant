@@ -67,3 +67,11 @@ tail -80 ~/diyquant-cron.log
 
 If it runs clean, resist building. Let several 503-ticker days accumulate before
 starting Stage 1 (the validation harness) in docs/roadmap-vision.md.
+
+**Closed 2026-08-01.** Stage 1 was built and the strategy measured: it loses to
+buy-and-hold (+93.3% against +112.1% out-of-sample). See [`baseline.md`](baseline.md).
+The lesson at the top of this file held a second time. The checklist asked which of three
+sane things the pipeline would do with 503 signals and the answer was a fourth; the
+roadmap assumed the strategy had an edge worth scaling and the answer was that it does
+not. Both were only discoverable by measuring against the ledger rather than reasoning
+about the design.

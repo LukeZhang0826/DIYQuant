@@ -112,6 +112,17 @@ taken is a normal input, not a fault.
   takes an absolute value, so it shorts high-beta names by construction. `news_scores` now
   archives every scored headline, since the gate cannot be backtested without a news
   history that only accumulates from the day capture starts.
+- **Stage 5 (market-neutral): next, not started.** Promoted ahead of Stage 2 on evidence
+  2026-08-01. The book carries persistent alpha inside an accidental **-0.66 beta** nobody
+  chose, so it is net short a market that rose 112% while its stock-picking works. That is
+  a portfolio-construction defect, not a signal defect, and it is measurable today with the
+  harness that now exists. Work: the simulated broker and risk module handling shorts
+  properly, plus explicit beta targeting so exposure is a decision rather than a by-product
+  of which names the ranking picked. Do **not** respond to the ablation by switching to
+  long-only: that trades the alpha for market direction and abandons the market-neutral
+  thesis. **Stage 2 (sentiment as a signal) is blocked**, not skipped: the gate cannot be
+  evaluated until `news_scores` holds months of history, so building it now would add an
+  unverifiable component to a strategy just proven unmeasured.
 - **Phase 4 / Stage 8: not started.** Intraday cadence. Three things must be settled
   first: a signal that defines "notable" (SMA crossover has no concept of magnitude),
   a data source that supports intraday backtesting (yfinance serves 1-minute bars for
