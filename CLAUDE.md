@@ -104,7 +104,12 @@ taken is a normal input, not a fault.
   run. **The baseline is in `docs/baseline.md` and it is not flattering: +93.3%
   out-of-sample against +112.1% for equal-weight buy-and-hold, at a 49% drawdown.**
   Trend-following shape, earning its keep only when the market falls (2022: +35.8% vs
-  -10.1%). Read that document before proposing any strategy change. `news_scores` now
+  -10.1%). Read that document before proposing any strategy change. `scripts/ablate.py`
+  then measured the components: concentration earns its place (alpha decays monotonically
+  as slots go 5 -> 10 -> 20 -> 50), hysteresis costs ~70pp against ~21pp of total
+  transaction costs, and the short leg spends the alpha rather than creating it (alpha is
+  flat at ~33-36% across configs while beta swings -0.66 to +1.20). The ranking metric
+  takes an absolute value, so it shorts high-beta names by construction. `news_scores` now
   archives every scored headline, since the gate cannot be backtested without a news
   history that only accumulates from the day capture starts.
 - **Phase 4 / Stage 8: not started.** Intraday cadence. Three things must be settled

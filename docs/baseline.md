@@ -68,6 +68,73 @@ recorded because it is what a single-pass backtest would have reported, and the
 gap between "-15.1%, looks broken" and "+93.3%, still loses to the index" is the
 difference measurement makes.
 
+## Ablations: which parts of the pipeline earn their place
+
+Selection, hysteresis and the short leg were all built on reasoning, because until
+this harness existed there was nothing to check them against. `python scripts/ablate.py`
+runs each one out-of-sample. Benchmark is +112.1% in every row.
+
+| Config | Return | Excess | Sharpe | Beta | Alpha | MaxDD |
+|---|---|---|---|---|---|---|
+| **baseline** 5 pos, hyst 10 | +93.3% | -18.7% | 0.52 | -0.66 | +35.9% | -48.9% |
+| 1 position | +46.8% | -65.3% | 0.57 | -0.79 | +68.6% | -91.6% |
+| 10 positions | +52.3% | -59.7% | 0.41 | -0.58 | +25.2% | -38.1% |
+| 20 positions | +15.5% | -96.6% | 0.25 | -0.37 | +13.8% | -43.5% |
+| 50 positions | -28.5% | -140.5% | -0.19 | -0.21 | -0.7% | -53.4% |
+| hysteresis off | +163.0% | +50.9% | 0.64 | -0.64 | +41.6% | -49.3% |
+| hysteresis 20 | +100.9% | -11.2% | 0.53 | -0.63 | +36.0% | -47.0% |
+| long only | +805.6% | +693.5% | 1.29 | +1.20 | +32.5% | -36.1% |
+| zero costs | +114.1% | +2.1% | 0.56 | -0.66 | +38.0% | -47.5% |
+
+**Read this as diagnosis, not as a leaderboard.** Nine configs against one test period
+is multiple testing: the best of nine beats the baseline by some margin on luck alone.
+Adopting a winner because it won here relocates the overfitting rather than removing it.
+What the table is good for is effect size and consistency.
+
+### The short leg spends the alpha, it does not create it
+
+Long-only returns +805.6% against the baseline's +93.3%, and the obvious conclusion is
+wrong. Alpha barely moves (+35.9% to +32.5%, slightly *down*) while beta swings from
+**-0.66 to +1.20**. Nearly all of that +693pp is flipped market exposure in a market that
+rose, not better stock picking.
+
+So the finding is not "shorting is bad". The selection carries about the same skill
+either way, and the short leg spends it fighting the market. Measured at leg level on
+the baseline config: the long leg runs +0.47 beta on 0.61 gross weight, the short leg
+**-1.18 beta on 0.36 gross weight**, netting a -0.71 book beta out of +0.25 net dollar
+exposure. The cause is the ranking metric: `strength = |fast - slow| / slow` takes an
+absolute value, so it ranks on trend magnitude regardless of direction, and the largest
+downward gaps in a bull market belong to high-beta names. Median beta of names shorted
+was **1.84** against **1.38** for names longed.
+
+Do not read the alpha column as an absolute. It is measured against a survivorship-biased
+benchmark, so ~35%/yr is inflated by an unknown amount. It is a relative signal across
+rows, which is what it is used for here.
+
+### Selection earns its place; hysteresis does not
+
+Concentration is monotone, in return and in alpha: 5 slots (+93.3%, alpha +35.9%) beats
+10 (+52.3%, +25.2%) beats 20 (+15.5%, +13.8%) beats 50 (-28.5%, -0.7%). Diluting the
+ranking dilutes the skill, which is the ranking doing real work. The selection layer was
+built on reasoning alone and now has evidence behind it.
+
+One slot is not better than five: higher alpha (+68.6%) at a **-91.6% drawdown**, which
+is a wipeout rather than a strategy. Five is a defensible point on that curve.
+
+**Hysteresis costs roughly 70 percentage points.** Off: +163.0%. At 10: +93.3%. At 20:
++100.9%. It exists to avoid churn costs, but the zero-costs row prices all transaction
+costs at only ~21pp, so the buffer spends far more in missed rotation than it ever saves
+in fees. That reasoning was wrong and only measurement could have shown it. Worth
+revisiting, and worth re-validating on data these nine runs have not touched.
+
+### What this argues for
+
+A selection signal with persistent alpha wrapped in an accidental, unmanaged -0.66 beta
+is the case for **Stage 5 (market-neutral)** ahead of Stage 2. Neutralising the exposure
+deliberately keeps the alpha; going long-only trades it for market direction and
+contradicts the market-neutral thesis in `roadmap-vision.md`. The config is deliberately
+left unchanged on the strength of this table.
+
 ## What this baseline does not cover
 
 - **The sentiment gate is not in it.** Nothing persists news, and yfinance serves
@@ -93,4 +160,5 @@ difference measurement makes.
 python scripts/backfill.py          # refresh the local store first
 python scripts/validate.py          # walk-forward (the number to quote)
 python scripts/validate.py --in-sample
+python scripts/ablate.py            # the component table above (~15 min, 503 tickers)
 ```

@@ -189,3 +189,34 @@ def test_funding_every_name_long_reproduces_the_benchmark():
     strat = (1 + result.daily_returns.iloc[1:]).prod()
     bench = (1 + pd.Series(result.benchmark_curve).pct_change().iloc[1:]).prod()
     assert strat == pytest.approx(bench)
+
+
+def test_beta_is_one_when_the_strategy_is_the_market():
+    """A book holding the whole universe long has, by definition, beta 1 and no alpha."""
+    from diyquant.backtest.portfolio import alpha_beta
+
+    market = pd.Series([0.01, -0.02, 0.03, 0.00, -0.01])
+    alpha, beta = alpha_beta(market, market)
+    assert beta == pytest.approx(1.0)
+    assert alpha == pytest.approx(0.0, abs=1e-12)
+
+
+def test_beta_is_zero_for_a_return_stream_unrelated_to_the_market():
+    """The market-neutral case: constant return regardless of what the index did."""
+    from diyquant.backtest.portfolio import alpha_beta
+
+    market = pd.Series([0.01, -0.02, 0.03, 0.00, -0.01])
+    flat = pd.Series([0.001] * 5)
+    alpha, beta = alpha_beta(flat, market)
+    assert beta == pytest.approx(0.0, abs=1e-12)
+    assert alpha == pytest.approx(0.001 * 252)
+
+
+def test_half_exposure_reads_as_half_beta():
+    """Distinguishes a bad signal from an under-invested one, which is the whole point."""
+    from diyquant.backtest.portfolio import alpha_beta
+
+    market = pd.Series([0.01, -0.02, 0.03, 0.00, -0.01])
+    alpha, beta = alpha_beta(market * 0.5, market)
+    assert beta == pytest.approx(0.5)
+    assert alpha == pytest.approx(0.0, abs=1e-12)

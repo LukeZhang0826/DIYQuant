@@ -23,7 +23,12 @@ from itertools import product
 import numpy as np
 import pandas as pd
 
-from diyquant.backtest.portfolio import TRADING_DAYS, PortfolioResult, run_portfolio_backtest
+from diyquant.backtest.portfolio import (
+    TRADING_DAYS,
+    PortfolioResult,
+    alpha_beta,
+    run_portfolio_backtest,
+)
 
 
 @dataclass
@@ -211,6 +216,7 @@ def _stitch(returns: list[pd.Series], bench: list[pd.Series]) -> PortfolioResult
     joined_bench = pd.concat(bench).sort_index()
     equity = (1 + joined).cumprod()
     benchmark = (1 + joined_bench).cumprod()
+    ann_alpha, beta = alpha_beta(joined, joined_bench)
 
     years = len(joined) / TRADING_DAYS
     drawdown = equity / equity.cummax() - 1
@@ -229,4 +235,6 @@ def _stitch(returns: list[pd.Series], bench: list[pd.Series]) -> PortfolioResult
         annual_turnover=float("nan"),  # windows are stitched, so turnover is per-window
         hit_rate=float("nan"),
         n_positions=0,
+        alpha=ann_alpha,
+        beta=beta,
     )

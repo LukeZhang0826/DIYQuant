@@ -56,6 +56,8 @@ class PortfolioResult:
     annual_turnover: float
     hit_rate: float
     n_positions: int  # closed position episodes
+    alpha: float = 0.0  # annualised excess over what beta alone explains
+    beta: float = 0.0  # exposure to the equal-weight universe
     trade_returns: list[float] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -78,6 +80,8 @@ class PortfolioResult:
             f"CAGR            : {cagr}\n"
             f"Sharpe (ann.)   : {self.sharpe:.2f}\n"
             f"Max drawdown    : {self.max_drawdown:.1%}\n"
+            f"Beta to universe: {self.beta:+.2f}\n"
+            f"Alpha (ann.)    : {self.alpha:+.1%}\n"
             f"Turnover (ann.) : {turnover}\n"
             f"Hit rate        : {hit}"
         )
@@ -125,6 +129,32 @@ def _aligned(
         ret[symbols].to_numpy(dtype=float),
         valid[symbols].to_numpy(dtype=bool),
     )
+
+
+def alpha_beta(strategy: pd.Series, benchmark: pd.Series) -> tuple[float, float]:
+    """Split daily returns into market exposure and what beta does not explain.
+
+    Beta is the slope of the strategy against the equal-weight universe; alpha
+    is the intercept, annualised. The distinction decides what a shortfall
+    means. A strategy that trails the index at beta 1.0 is losing to it on the
+    same risk and is simply worse. One that trails at beta 0.2 is barely
+    invested in the thing it is being compared to, and the honest read is that
+    it is under-exposed rather than wrong, which points at position sizing or a
+    market-neutral framing instead of at the signal.
+
+    Zero variance in the benchmark leaves beta undefined; return 0.0 rather
+    than a divide-by-zero, which only happens on degenerate inputs anyway.
+    """
+    paired = pd.concat([strategy, benchmark], axis=1).dropna()
+    if len(paired) < 2:
+        return 0.0, 0.0
+    strat, bench = paired.iloc[:, 0], paired.iloc[:, 1]
+    variance = float(bench.var())
+    if variance == 0:
+        return 0.0, 0.0
+    beta = float(bench.cov(strat) / variance)
+    daily_alpha = float(strat.mean() - beta * bench.mean())
+    return daily_alpha * TRADING_DAYS, beta
 
 
 def _position_returns(held_w: np.ndarray, ret: np.ndarray) -> list[float]:
@@ -231,6 +261,7 @@ def run_portfolio_backtest(
     )
     drawdown = equity / equity.cummax() - 1
     wins = [r for r in closed if r > 0]
+    ann_alpha, beta = alpha_beta(returns_s, bench_ret)
 
     return PortfolioResult(
         equity_curve=equity,
@@ -245,5 +276,7 @@ def run_portfolio_backtest(
         annual_turnover=float(turnover.mean() * TRADING_DAYS / 2),
         hit_rate=len(wins) / len(closed) if closed else 0.0,
         n_positions=len(closed),
+        alpha=ann_alpha,
+        beta=beta,
         trade_returns=closed,
     )
