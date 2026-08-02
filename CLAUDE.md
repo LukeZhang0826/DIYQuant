@@ -54,6 +54,7 @@ src/diyquant/
   risk/              # limits.py (kill-switch), sizing.py, selection.py (which signals get funded)
   execution/         # broker interface, simulated paper broker, ledger, pipeline
   alerts/            # discord.py: webhook heartbeat, never raises
+  report/            # paging.py: row caps + the dashboard's client-side pager
 scripts/             # refresh_universe, backfill, run_backtest, run_live, score_news, report,
                      # check_alerts (smoke-test the webhook), check_pulse (alert when not trading),
                      # cancel_pending_orders (withdraw resting orders you no longer want)

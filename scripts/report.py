@@ -28,6 +28,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from diyquant.report.paging import (  # noqa: E402  (needs the sys.path line above)
+    PAGER_CSS,
+    PAGER_SCRIPT,
+    TABLE_ROWS,
+    esc,
+    newest_first,
+    paged_table,
+)
+
 SPARK_BARS = 90  # trading days of price history per ticker card
 UNIVERSE_CARDS = 24  # cap on active-ticker cards; a 503-name universe cannot show all
 
@@ -103,16 +112,6 @@ def hours_since(ts: str) -> float:
 
 def money(v: float) -> str:
     return f"${v:,.2f}"
-
-
-def esc(s: object) -> str:
-    return (
-        str(s)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
 
 
 def short_ts(ts: str) -> str:
@@ -233,7 +232,7 @@ def ticker_cards() -> str:
         return ""
 
     counts = {1: 0, -1: 0, 0: 0}
-    active: list[tuple[str, list[float], int, float]] = []  # ticker, closes, signal, change
+    priced: list[tuple[str, list[float], int, float]] = []  # ticker, closes, signal, change
     for ticker in tickers:
         try:
             bars = load_bars(ticker)
@@ -244,14 +243,14 @@ def ticker_cards() -> str:
         if len(closes) < 2:
             continue
         counts[signal] = counts.get(signal, 0) + 1
-        if signal != 0:
-            change = (closes[-1] - closes[0]) / closes[0] * 100
-            active.append((ticker, closes, signal, change))
+        change = (closes[-1] - closes[0]) / closes[0] * 100
+        priced.append((ticker, closes, signal, change))
 
     total = counts[1] + counts[-1] + counts[0]
     if total == 0:
         return ""  # store absent or empty
 
+    active = [p for p in priced if p[2] != 0]
     active.sort(key=lambda a: abs(a[3]), reverse=True)
     shown = active[:UNIVERSE_CARDS]
 
@@ -311,7 +310,43 @@ def ticker_cards() -> str:
   <div class="panel-head"><h2>Universe</h2>
     <span class="panel-note">signal tally across the S&amp;P 500; cards for active names</span></div>
   {body}
+  {universe_table(priced)}
 </div>"""
+
+
+def universe_table(priced: list[tuple[str, list[float], int, float]]) -> str:
+    """Every priced ticker as a searchable table, folded away until asked for.
+
+    This is the same data the cards above show, minus the sparkline, and that
+    omission is the whole point. A card carries 90 plotted coordinates; at S&P
+    500 scale drawing one per ticker is megabytes of SVG shipped on every page
+    load, which is the unbounded growth the row caps exist to prevent. A text
+    row is a rounding error by comparison, so the full universe fits with no cap
+    at all: the cards stay the glanceable few, this is the searchable all.
+    """
+    if not priced:
+        return ""
+
+    rows = []
+    for ticker, closes, signal, change in sorted(priced, key=lambda p: p[0]):
+        label = {1: "long", -1: "short"}.get(signal, "flat")
+        stance = {1: "pos", -1: "neg"}.get(signal, "idle")
+        tone = "pos" if change >= 0 else "neg"
+        sign = "+" if change >= 0 else ""
+        rows.append(
+            f"<tr><td class='sym'>{esc(ticker)}</td>"
+            f"<td><span class='chip chip-{stance}'>{esc(label)}</span></td>"
+            f"<td class='num'>{esc(money(closes[-1]))}</td>"
+            f"<td class='num {tone}'>{sign}{change:.2f}%</td></tr>"
+        )
+
+    head = """<tr><th>Ticker</th><th>Stance</th><th class="num">Price</th>
+  <th class="num">90-session</th></tr>"""
+    table = paged_table(head, rows, len(priced), search="Filter by ticker...")
+    return f"""<details class="expand">
+  <summary>Browse all {len(priced)} tickers</summary>
+  {table}
+</details>"""
 
 
 # -- tables ----------------------------------------------------------------
@@ -320,7 +355,7 @@ def ticker_cards() -> str:
 def orders_table(orders: list[sqlite3.Row]) -> str:
     if not orders:
         return '<div class="empty">No orders recorded.</div>'
-    rows = "".join(
+    rows = [
         f"<tr><td class='mono muted'>{esc(short_ts(o['ts']))}</td>"
         f"<td class='sym'>{esc(o['symbol'])}</td>"
         f"<td class='{'pos' if o['side'] == 'buy' else 'neg'}'>{esc(o['side'])}</td>"
@@ -328,12 +363,11 @@ def orders_table(orders: list[sqlite3.Row]) -> str:
         f"<td><span class='pill pill-{esc(o['status'])}'>{esc(o['status'])}</span></td>"
         f"<td class='muted'>{esc(o['signal_name'])} ({o['signal_value']:+d})</td>"
         f"<td class='muted'>{esc(o['risk_reason'] or '')}</td></tr>"
-        for o in reversed(orders)
-    )
-    return f"""<div class="scroll"><table>
-  <thead><tr><th>Time (UTC)</th><th>Symbol</th><th>Side</th><th class="num">Qty</th>
-  <th>Status</th><th>Signal</th><th>Risk note</th></tr></thead>
-  <tbody>{rows}</tbody></table></div>"""
+        for o in newest_first(orders)
+    ]
+    head = """<tr><th>Time (UTC)</th><th>Symbol</th><th>Side</th><th class="num">Qty</th>
+  <th>Status</th><th>Signal</th><th>Risk note</th></tr>"""
+    return paged_table(head, rows, len(orders))
 
 
 def fills_table(fills: list[sqlite3.Row]) -> str:
@@ -343,19 +377,18 @@ def fills_table(fills: list[sqlite3.Row]) -> str:
             "<em>next</em> bar's open, so orders stay open until a later cycle "
             "reconciles them. Closing the loop takes two runs.</div>"
         )
-    rows = "".join(
+    rows = [
         f"<tr><td class='mono muted'>{esc(short_ts(f['ts']))}</td>"
         f"<td class='sym'>{esc(f['symbol'])}</td>"
         f"<td class='{'pos' if f['side'] == 'buy' else 'neg'}'>{esc(f['side'])}</td>"
         f"<td class='num'>{f['qty']}</td>"
         f"<td class='num'>{esc(money(float(f['price'])))}</td>"
         f"<td class='num muted'>{esc(money(float(f['fees'])))}</td></tr>"
-        for f in reversed(fills)
-    )
-    return f"""<div class="scroll"><table>
-  <thead><tr><th>Time (UTC)</th><th>Symbol</th><th>Side</th><th class="num">Qty</th>
-  <th class="num">Price</th><th class="num">Fees</th></tr></thead>
-  <tbody>{rows}</tbody></table></div>"""
+        for f in newest_first(fills)
+    ]
+    head = """<tr><th>Time (UTC)</th><th>Symbol</th><th>Side</th><th class="num">Qty</th>
+  <th class="num">Price</th><th class="num">Fees</th></tr>"""
+    return paged_table(head, rows, len(fills))
 
 
 def sentiment_block(gates: list[sqlite3.Row]) -> str:
@@ -378,7 +411,7 @@ def sentiment_block(gates: list[sqlite3.Row]) -> str:
     coverage = len(scored) / len(gates) * 100
 
     cells = []
-    for g in reversed(gates[-25:]):
+    for g in newest_first(gates):
         vetoed = bool(g["vetoed"])
         # "--" rather than 0.00 when there was no usable news: the table must
         # not imply the model returned a neutral reading it never made.
@@ -397,8 +430,14 @@ def sentiment_block(gates: list[sqlite3.Row]) -> str:
             f"<td>{outcome}</td>"
             f"<td class='muted'>{esc(g['reason'] or '')}</td></tr>"
         )
-    rows = "".join(cells)
 
+    head = """<tr><th>Time (UTC)</th><th>Symbol</th><th class="num">Signal</th>
+  <th class="num">After gate</th><th class="num">Score</th><th>Outcome</th><th>Reason</th></tr>"""
+
+    # The tiles count every gate row in the ledger while the table below shows
+    # only the recent tail. That asymmetry is deliberate: a veto rate is only
+    # meaningful over the full denominator, so it must not be recomputed from
+    # whatever slice happens to be on screen.
     return f"""<div class="tiles" style="margin-bottom:12px">
   <div class="tile"><span class="tile-label">Evaluations</span>
     <span class="tile-value">{len(gates)}</span>
@@ -410,10 +449,7 @@ def sentiment_block(gates: list[sqlite3.Row]) -> str:
     <span class="tile-value">{coverage:.0f}%</span>
     <span class="tile-note">had usable headlines</span></div>
 </div>
-<div class="scroll"><table>
-  <thead><tr><th>Time (UTC)</th><th>Symbol</th><th class="num">Signal</th>
-  <th class="num">After gate</th><th class="num">Score</th><th>Outcome</th><th>Reason</th></tr></thead>
-  <tbody>{rows}</tbody></table></div>"""
+{paged_table(head, cells, len(gates))}"""
 
 
 def positions_block(positions: dict[str, int]) -> str:
@@ -601,6 +637,19 @@ tr:last-child td { border-bottom: none; }
 .num { text-align: right; }
 .sym { color: var(--ink); font-weight: 620; }
 .pos { color: var(--pos); } .neg { color: var(--neg); } .muted { color: var(--muted); }
+/* The pager's own styles ship with the component in diyquant.report.paging and
+   are spliced in below, so its markup, CSS and script cannot drift apart. */
+.expand { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.expand > summary {
+  cursor: pointer; color: var(--ink-2); font-size: 12.5px; font-weight: 600;
+  list-style: none; display: flex; align-items: center; gap: 7px;
+}
+.expand > summary::-webkit-details-marker { display: none; }
+.expand > summary::before { content: "\\25B8"; color: var(--muted); font-size: 10px; }
+.expand[open] > summary::before { content: "\\25BE"; }
+.expand > summary:hover { color: var(--ink); }
+.expand[open] > summary { margin-bottom: 12px; }
+
 .empty {
   background: rgba(255,255,255,0.02); border: 1px dashed var(--line); border-radius: 12px;
   padding: 15px; color: var(--ink-2); font-size: 13px;
@@ -664,8 +713,12 @@ def build_html(conn: sqlite3.Connection, source: Path) -> str:
     )
 
     generated = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
-    return f"""<title>DIYQuant dashboard</title>
-<style>{CSS}</style>
+    # The charset declaration is load-bearing, not boilerplate: the file is written
+    # as UTF-8 and the separators are U+00B7, so without it a browser falls back to
+    # windows-1252 and renders every one of them as "Â·".
+    return f"""<meta charset="utf-8">
+<title>DIYQuant dashboard</title>
+<style>{CSS}{PAGER_CSS}</style>
 <div class="shell">
   <div class="topbar">
     <span class="mark">Q</span>
@@ -710,9 +763,11 @@ def build_html(conn: sqlite3.Connection, source: Path) -> str:
 
   <footer>
     Read-only · generated {esc(generated)} from <code>{esc(source.name)}</code><br>
+    Tables show the most recent {TABLE_ROWS} rows; the full history is in the ledger.<br>
     Strategy changes live in <code>config/settings.yaml</code> under version control.
   </footer>
-</div>"""
+</div>
+<script>{PAGER_SCRIPT}</script>"""
 
 
 def build_state(conn: sqlite3.Connection) -> dict:
