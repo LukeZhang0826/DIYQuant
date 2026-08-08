@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from diyquant.risk.selection import select_positions
+from diyquant.risk.sizing import DEFAULT_VOL_LOOKBACK, realized_vol_pct, volatility_budget_pct
 from diyquant.signals.base import conviction_series
 
 TRADING_DAYS = 252
@@ -58,6 +59,12 @@ class PortfolioResult:
     n_positions: int  # closed position episodes
     alpha: float = 0.0  # annualised excess over what beta alone explains
     beta: float = 0.0  # exposure to the equal-weight universe
+    # Mean sum of absolute weights: 1.0 is fully invested, 0.5 is half in cash.
+    # Equal weighting pins this at 1.0, so it only says anything once sizing can
+    # choose to hold less. Without it a volatility-scaled config looks simply
+    # worse than the baseline, when part of the gap is it being less invested.
+    avg_gross_exposure: float = float("nan")
+    gross_exposure: pd.Series = field(default_factory=pd.Series)
     trade_returns: list[float] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -82,15 +89,16 @@ class PortfolioResult:
             f"Max drawdown    : {self.max_drawdown:.1%}\n"
             f"Beta to universe: {self.beta:+.2f}\n"
             f"Alpha (ann.)    : {self.alpha:+.1%}\n"
+            f"Gross exposure  : {self.avg_gross_exposure:.2f}x\n"
             f"Turnover (ann.) : {turnover}\n"
             f"Hit rate        : {hit}"
         )
 
 
 def _aligned(
-    bars_by_symbol: dict[str, pd.DataFrame], strategy: object
-) -> tuple[list[str], pd.DatetimeIndex, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Signals, convictions, simple returns and a validity mask on one date grid.
+    bars_by_symbol: dict[str, pd.DataFrame], strategy: object, vol_lookback: int
+) -> tuple[list[str], pd.DatetimeIndex, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Signals, convictions, volatilities, simple returns and a validity mask on one date grid.
 
     Each series is computed over that symbol's own full history first, so a
     rolling window is never truncated by another symbol's start date, and only
@@ -103,11 +111,17 @@ def _aligned(
     about 9 percentage points over eight years, which is more than enough to turn
     a losing strategy into an apparently winning one.
     """
-    signals, strengths, returns = {}, {}, {}
+    signals, strengths, returns, vols = {}, {}, {}, {}
     for symbol, bars in bars_by_symbol.items():
         signals[symbol] = strategy.generate(bars)
         strengths[symbol] = conviction_series(strategy, bars)
         returns[symbol] = bars["close"].pct_change()
+        # Skipped entirely when sizing will not consult it. A walk-forward fits
+        # 16 parameter combinations per window and every one of them would
+        # otherwise pay for a rolling standard deviation across ~500 symbols
+        # that the equal-weight path never reads.
+        if vol_lookback is not None:
+            vols[symbol] = realized_vol_pct(bars["close"], vol_lookback)
 
     sig = pd.DataFrame(signals).sort_index()
     dates = sig.index
@@ -119,6 +133,10 @@ def _aligned(
     sig = sig.fillna(0.0)
     stg = pd.DataFrame(strengths).reindex(dates).fillna(0.0)
     ret = raw_ret.fillna(0.0)
+    # Volatility keeps its NaNs on purpose, unlike every other frame here. NaN
+    # means too little history to size the name, and filling it with 0 would
+    # read as "perfectly calm" and hand it the largest allowed position.
+    vol = pd.DataFrame(vols).reindex(dates)
 
     symbols = list(sig.columns)
     return (
@@ -126,6 +144,7 @@ def _aligned(
         dates,
         sig.to_numpy(dtype=float),
         stg[symbols].to_numpy(dtype=float),
+        vol[symbols].to_numpy(dtype=float),
         ret[symbols].to_numpy(dtype=float),
         valid[symbols].to_numpy(dtype=bool),
     )
@@ -199,12 +218,24 @@ def run_portfolio_backtest(
     hysteresis_rank: int = 10,
     cost_bps: float = 5.0,
     slippage_bps: float = 2.0,
+    max_position_pct: float = 20.0,
+    target_risk_pct: float = 0.0,
+    vol_lookback: int = DEFAULT_VOL_LOOKBACK,
 ) -> PortfolioResult:
-    """Replay the selection pipeline over history and score what it would have done."""
+    """Replay the selection pipeline over history and score what it would have done.
+
+    With `target_risk_pct` at 0 every funded name gets an equal share of the
+    book, which is what the pipeline did before 2026-08-08 and what the ablation
+    compares against. Above 0, each name instead gets the notional from
+    `risk.sizing.volatility_budget_pct`, so the weights no longer sum to 1: a
+    book of jumpy names is deliberately less invested than a book of calm ones,
+    and the difference sits in cash earning nothing. That drag is the cost being
+    measured, and it has to be paid out of the same equity curve as the benefit.
+    """
     if not bars_by_symbol:
         raise ValueError("no bars given")
 
-    symbols, dates, sig, stg, ret, valid = _aligned(bars_by_symbol, strategy)
+    symbols, dates, sig, stg, vol, ret, valid = _aligned(bars_by_symbol, strategy, vol_lookback)
     idx_of = {s: j for j, s in enumerate(symbols)}
     n_dates, n_symbols = sig.shape
     weights = np.zeros((n_dates, n_symbols))
@@ -225,8 +256,16 @@ def run_portfolio_backtest(
         if funded:
             share = 1.0 / len(funded)
             for s in funded:
-                weights[i, idx_of[s]] = row_sig[idx_of[s]] * share
-        direction = {s: int(row_sig[idx_of[s]]) for s in funded}
+                j = idx_of[s]
+                if target_risk_pct > 0:
+                    share = (
+                        volatility_budget_pct(vol[i, j], target_risk_pct, max_position_pct) / 100
+                    )
+                weights[i, j] = row_sig[j] * share
+        # Keyed off the weight, not off `funded`: a name whose volatility budget
+        # came out 0 was selected but is not held, and the pipeline reads
+        # incumbency from the broker's position, which would be 0 too.
+        direction = {s: int(row_sig[idx_of[s]]) for s in funded if weights[i, idx_of[s]] != 0}
 
     # Position held DURING date i is the one selected at i-1: no look-ahead.
     held_w = np.vstack([np.zeros((1, n_symbols)), weights[:-1]])
@@ -237,6 +276,7 @@ def run_portfolio_backtest(
 
     closed = _position_returns(held_w, ret)
 
+    gross_exp = pd.Series(np.abs(held_w).sum(axis=1), index=dates)
     returns_s = pd.Series(port_ret, index=dates)
     equity = (1 + returns_s).cumprod()
     # Equal weight across the symbols actually trading that day, not across every
@@ -278,5 +318,7 @@ def run_portfolio_backtest(
         n_positions=len(closed),
         alpha=ann_alpha,
         beta=beta,
+        avg_gross_exposure=float(gross_exp.mean()),
+        gross_exposure=gross_exp,
         trade_returns=closed,
     )

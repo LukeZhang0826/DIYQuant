@@ -44,7 +44,7 @@ from diyquant.execution.base import Broker
 from diyquant.execution.ledger import Ledger
 from diyquant.risk.limits import check_daily_drawdown, check_position_cap
 from diyquant.risk.selection import select_positions
-from diyquant.risk.sizing import target_shares
+from diyquant.risk.sizing import realized_vol_pct, target_shares, volatility_budget_pct
 from diyquant.signals.base import Signal, conviction
 from diyquant.signals.sentiment.filter import apply_sentiment_gate
 
@@ -284,11 +284,20 @@ def run_once(
         # down a position we still like but no longer rank highly enough to fund.
         effective = target if symbol in selected else 0
         price = float(bars["close"].iloc[-1])
+        # Volatility scaling narrows the cap per symbol; it can only ask for
+        # less, so the flat cap below is still the backstop it always was.
+        budget = volatility_budget_pct(
+            daily_vol_pct=float(
+                realized_vol_pct(bars["close"], risk_cfg.vol_lookback_days).iloc[-1]
+            ),
+            target_risk_pct=risk_cfg.target_risk_pct,
+            max_position_pct=risk_cfg.max_position_pct,
+        )
         shares = target_shares(
             target=effective,
             equity=account.equity,
             price=price,
-            max_position_pct=risk_cfg.max_position_pct,
+            max_position_pct=budget,
         )
         delta = shares - broker.get_position(symbol)
         if delta == 0:

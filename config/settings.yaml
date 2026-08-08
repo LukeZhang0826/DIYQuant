@@ -49,6 +49,19 @@ risk:                          # enforced in Phase 2 live pipeline; documented n
   hysteresis_rank: 10          # a held name keeps its slot while it still ranks this high, so
                                # slipping from 5th to 6th does not sell it and buy it back
                                # tomorrow. Newcomers must still rank inside max_positions.
+  target_risk_pct: 0.4         # each position is sized so a 1-standard-deviation day in it
+                               # moves the account about this much. max_position_pct above
+                               # stays as a hard backstop, so this can only ever size down.
+                               # 0 disables it and restores the flat cap for every name.
+                               # Why 0.4 and not the 0.5 that scored best out-of-sample:
+                               # 0.3 and 0.5 tie on Sharpe (0.77 vs the flat cap's 0.52) and
+                               # every risk measure is monotone in this number, so the
+                               # region is flat and 0.4 sits inside it. Picking 0.5 for its
+                               # return would be selecting the winner of a multiple-testing
+                               # contest, which is what docs/baseline.md warns against.
+  vol_lookback_days: 20        # trading days of daily returns behind the volatility estimate.
+                               # Fewer bars than this means volatility is unknown, and an
+                               # unknown volatility gets no position rather than a full one.
   max_baseline_age_hours: 120  # skip the drawdown check when the previous equity snapshot
                                # is older than this. 120h clears a weekend (72h) and a
                                # holiday long weekend (96h); past that the gap is downtime,

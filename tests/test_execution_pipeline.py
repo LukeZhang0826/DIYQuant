@@ -583,9 +583,7 @@ def make_ohlc(prices: list[float]) -> pd.DataFrame:
 
 def cycle(sim_path, ledger, bars, target=1):
     """One cycle against the real simulated broker, rebuilt per cycle as run_live does."""
-    broker = SimulatedBroker(
-        sim_path, bars, cost_bps=5, slippage_bps=2, starting_cash=10_000
-    )
+    broker = SimulatedBroker(sim_path, bars, cost_bps=5, slippage_bps=2, starting_cash=10_000)
     report = run_once(
         broker=broker,
         ledger=ledger,
@@ -693,3 +691,84 @@ def test_a_demoted_tickers_exit_order_is_not_withdrawn(tmp_path):
     assert broker.cancelled == []
     assert report.orders_cancelled == 0
     assert order_id in [row["id"] for row in ledger.pending_orders()]
+
+
+def wiggling_bars(price: float, daily_move_pct: float, periods: int = 61) -> pd.DataFrame:
+    """Bars alternating up and down by a fixed percentage, so realized vol is known.
+
+    Alternating moves keep the price anchored near `price` while giving the
+    rolling standard deviation something real to measure, which is what lets a
+    test assert on position size rather than on the sizing function in isolation.
+    An odd count lands the final bar back on `price` exactly, so share counts
+    are checkable by hand.
+    """
+    idx = pd.date_range("2024-01-01", periods=periods, freq="B")
+    step = daily_move_pct / 100
+    closes = [price * (1 + step) ** (i % 2) for i in range(periods)]
+    return pd.DataFrame({"close": closes}, index=idx)
+
+
+def test_volatility_scaling_shrinks_the_position_in_a_jumpy_name(tmp_path):
+    """The 2026-08-04 lesson: a 20% notional cap is not a 20% risk cap.
+
+    Two names at the same price, one moving 1% a day and one moving 8%. Under
+    the flat cap both get 20 shares of a 10k account. Under volatility scaling
+    the jumpy one has to come down, because it is the one that can move the
+    account past its daily drawdown limit on its own.
+    """
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    broker = FakeBroker(equity=10_000)
+    bars = {"CALM": wiggling_bars(100.0, 1.0), "JUMPY": wiggling_bars(100.0, 8.0)}
+
+    run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol=bars,
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(target_risk_pct=0.4),
+    )
+
+    sized = dict(broker.submitted)
+    assert sized["CALM"] > sized["JUMPY"] > 0
+    # CALM sits at the flat cap (20% of 10k at 100 = 20 shares); JUMPY cannot.
+    assert sized["CALM"] == 20
+
+
+def test_a_name_too_new_to_size_is_not_traded(tmp_path):
+    """Unknown volatility must mean no position, not the maximum position.
+
+    Five bars is fewer than the 20-day lookback, so realized volatility is NaN.
+    Defaulting that to the flat cap would hand the largest allowed position to
+    the symbols the system knows least about.
+    """
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    broker = FakeBroker(equity=10_000)
+
+    run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol={"NEW": make_bars(100.0)},
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(target_risk_pct=0.4),
+    )
+
+    assert broker.submitted == []
+
+
+def test_scaling_off_by_default_keeps_the_flat_cap(tmp_path):
+    """Existing behaviour is unchanged until target_risk_pct is configured."""
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    broker = FakeBroker(equity=10_000)
+
+    run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol={"JUMPY": wiggling_bars(100.0, 8.0)},
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+    )
+
+    assert broker.submitted == [("JUMPY", 20)]

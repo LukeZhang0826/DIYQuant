@@ -169,6 +169,47 @@ Two things this exposed, worth remembering:
   retract what is already at the broker. `SimulatedBroker.cancel_order()` and
   `scripts/cancel_pending_orders.py` exist for that.
 
+## The cap was denominated in dollars, the limit in risk: fixed 2026-08-08
+
+The live account halted on **2026-08-04** at a 6.93% daily drawdown against a 3.00%
+limit, and the halt was correct: it flattened a book that would have lost far more by
+2026-08-07. What was wrong is that the halt was reachable by a single name.
+
+The book was five slots at `max_position_pct` 20% each: short COHR, SMCI, ALB and ON,
+long TECH, netting **-$63k of exposure on $100k of equity**. COHR gapped **+13.1%
+overnight** on 22% of equity. The account was already down 4.9% at the opening print.
+Attribution: **71% of the day's loss was overnight gaps** realised at 09:30, 29% was
+intraday drift.
+
+The defect is that a flat 20% notional cap and a 3% daily drawdown limit are only
+compatible for a name of average volatility. At 20% of equity, any name that can move
+15% can trip the kill-switch by itself, so the switch stops being a circuit breaker for
+"something is going wrong" and becomes a tripwire for "we own something jumpy".
+
+`risk/sizing.py:volatility_budget_pct` now sizes each position so that a
+one-standard-deviation day in it moves the account by about `risk.target_risk_pct`,
+using 20-day realized volatility of daily simple returns. The flat cap stays on top as a
+hard backstop, so scaling can only ever ask for **less**. Three things to keep in mind:
+
+- **Unknown volatility means no position, never the maximum one.** Fewer bars than the
+  lookback gives NaN, which returns a budget of 0. Defaulting the other way would hand
+  the largest allowed position to the symbols the system knows least about. A genuinely
+  *zero* volatility is a different case and does get the full cap.
+- **Gross exposure is no longer pinned at 1.0.** A book of jumpy names is deliberately
+  less invested, and the idle cash earns nothing. That drag is the price of the
+  protection and it is charged to the same equity curve, which is why `PortfolioResult`
+  reports `avg_gross_exposure`: without it a volatility-scaled config just looks worse.
+- **Backtest and live share the function.** `backtest/portfolio.py` weights by the same
+  `volatility_budget_pct` the pipeline calls, so this is measurable rather than assumed.
+  `risk.target_risk_pct` of 0 restores the flat cap exactly, which is the ablation
+  baseline.
+
+Counterfactual on the actual 2026-08-04 book: mark-to-market loss **-5.39% -> -1.78%**,
+gross exposure **1.03x -> 0.62x**. The kill-switch would not have fired.
+
+This does not make the book market-neutral. Being 63% net short a rising market is still
+**Stage 5**, and still next.
+
 ## Stale order cancellation: resolved 2026-08-01 in the pipeline
 
 `run_once()` now withdraws resting orders itself, as step 2, and the ordering is the whole

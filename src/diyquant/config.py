@@ -47,6 +47,8 @@ class RiskConfig(BaseModel):
     max_baseline_age_hours: float = 120.0
     max_positions: int = 5
     hysteresis_rank: int = 10
+    target_risk_pct: float = 0.0  # 0 disables volatility scaling: flat cap for everyone
+    vol_lookback_days: int = 20
 
 
 class ExecutionConfig(BaseModel):

@@ -91,6 +91,12 @@ def main() -> int:
     print(
         f"selection: {risk.max_positions} positions, hysteresis rank {risk.hysteresis_rank}; "
         f"costs {settings.backtest.cost_bps}bps + {settings.backtest.slippage_bps}bps slippage\n"
+        + (
+            f"sizing: {risk.target_risk_pct}% risk per position per day, "
+            f"capped at {risk.max_position_pct}% of equity\n"
+            if risk.target_risk_pct > 0
+            else f"sizing: flat {risk.max_position_pct}% of equity per position\n"
+        )
     )
 
     if args.in_sample:
@@ -103,6 +109,8 @@ def main() -> int:
             hysteresis_rank=risk.hysteresis_rank,
             cost_bps=settings.backtest.cost_bps,
             slippage_bps=settings.backtest.slippage_bps,
+            max_position_pct=risk.max_position_pct,
+            target_risk_pct=risk.target_risk_pct,
         )
         print(result.summary())
     else:
@@ -114,6 +122,8 @@ def main() -> int:
             hysteresis_rank=risk.hysteresis_rank,
             cost_bps=settings.backtest.cost_bps,
             slippage_bps=settings.backtest.slippage_bps,
+            max_position_pct=risk.max_position_pct,
+            target_risk_pct=risk.target_risk_pct,
             train_years=args.train_years,
             test_years=args.test_years,
         )

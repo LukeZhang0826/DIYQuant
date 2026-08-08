@@ -86,6 +86,61 @@ runs each one out-of-sample. Benchmark is +112.1% in every row.
 | long only | +805.6% | +693.5% | 1.29 | +1.20 | +32.5% | -36.1% |
 | zero costs | +114.1% | +2.1% | 0.56 | -0.66 | +38.0% | -47.5% |
 
+Volatility sizing was measured later, on 2026-08-08, after the live account halted. Those
+rows carry a `gross` column, the mean sum of absolute weights, because they are the first
+configs that can choose to hold less than the whole account. Every row above is at 1.00 by
+construction, and the baseline was re-run alongside these and reproduced to the decimal.
+
+| Config | Return | Excess | Sharpe | Beta | Alpha | MaxDD | Gross |
+|---|---|---|---|---|---|---|---|
+| **baseline** flat 20% cap | +93.3% | -18.7% | 0.52 | -0.66 | +35.9% | -48.9% | 1.00 |
+| vol-scaled 0.3%/day | +77.0% | -35.1% | 0.77 | -0.13 | +14.8% | -17.3% | 0.41 |
+| vol-scaled 0.4%/day (shipped) | +107.1% | -5.0% | 0.78 | -0.17 | +19.8% | -22.6% | 0.54 |
+| vol-scaled 0.5%/day | +132.4% | +20.4% | 0.77 | -0.23 | +24.1% | -27.1% | 0.64 |
+| vol-scaled 0.8%/day | +113.2% | +1.1% | 0.60 | -0.45 | +29.1% | -36.8% | 0.85 |
+
+### Volatility sizing earns its place, and the return column is not why
+
+Read the monotone columns first, because those are the ones carrying a mechanism rather
+than noise. Gross exposure (0.41, 0.54, 0.64, 0.85), drawdown (-17.3%, -22.6%, -27.1%,
+-36.8%), beta (-0.13, -0.17, -0.23, -0.45) and alpha (+14.8%, +19.8%, +24.1%, +29.1%) all
+move in lockstep with the target. That is what a real effect looks like: turn the dial, the
+result tracks it. The 0.4% row was run separately to confirm the shipped setting rather
+than interpolated from its neighbours, and it landed between them on every column.
+
+Return does **not** behave that way. It climbs to 0.5% and then falls away (+77.0%,
++107.1%, +132.4%, +113.2%), so it is the column to distrust, and choosing a setting because
+it maximised return here is exactly the mistake this document exists to prevent.
+
+**Sharpe rises from 0.52 to 0.77-0.78 and stays flat across 0.3%, 0.4% and 0.5%.** A result
+that holds across a range of settings is worth far more than a peak at one of them, because
+there is no single lucky value doing the work.
+
+Alpha appears to fall, from +35.9% to +19.8%, and that reading is an artefact of exposure.
+Alpha is not scaled for how invested the book is. Per unit of gross exposure the shipped
+config runs **+36.7%/yr against the baseline's +35.9%**, so the stock-picking is not being
+damaged, it is being applied to a smaller book. The falling *absolute* alpha is the cost of
+holding less, which is the trade being offered and is charged honestly to the same curve.
+
+The beta side-effect was not designed and is worth noticing: **-0.66 to -0.17**. The names
+with the highest volatility were also the high-beta ones the ranking metric kept shorting,
+so cutting their size cut most of the accidental market exposure with them. This does not
+make the book market-neutral and does not replace Stage 5, which should still target beta
+deliberately rather than inherit a better accident.
+
+**0.4% was shipped even though 0.5% returned more.** Be clear about what is being given up:
+0.5% beat the equal-weight universe by +20.4% and 0.4% still trails it by -5.0%. The reason
+is that return is the column that does not track the dial, and the purpose of this change
+was never to beat the benchmark. It was to make the 3% daily kill-switch reachable only by
+a genuine portfolio event instead of by one name gapping overnight. 0.4% leaves more
+headroom for that: on the real 2026-08-04 book it turns a -5.39% mark-to-market day into
+-1.78%, where 0.5% would land near -2.2% and closer to the limit it exists to respect.
+Sharpe is flat across 0.3-0.5, so nothing risk-adjusted is being sacrificed to buy that
+headroom.
+
+Beating the benchmark is a Stage 5 problem. A book running -0.17 beta against an index that
+rose 112% is not going to out-return it, and sizing was never going to fix that.
+
 **Read this as diagnosis, not as a leaderboard.** Nine configs against one test period
 is multiple testing: the best of nine beats the baseline by some margin on luck alone.
 Adopting a winner because it won here relocates the overfitting rather than removing it.

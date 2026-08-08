@@ -120,6 +120,8 @@ def walk_forward(
     hysteresis_rank: int = 10,
     cost_bps: float = 5.0,
     slippage_bps: float = 2.0,
+    max_position_pct: float = 20.0,
+    target_risk_pct: float = 0.0,
     train_years: float = 3.0,
     test_years: float = 1.0,
     objective=lambda r: r.sharpe,
@@ -147,6 +149,7 @@ def walk_forward(
     windows: list[Window] = []
     oos_returns: list[pd.Series] = []
     oos_bench: list[pd.Series] = []
+    oos_gross: list[pd.Series] = []
 
     for train_start, train_end, test_start, test_end in spans:
         train_bars = _slice(bars_by_symbol, train_start, train_end)
@@ -161,6 +164,8 @@ def walk_forward(
                     hysteresis_rank=hysteresis_rank,
                     cost_bps=cost_bps,
                     slippage_bps=slippage_bps,
+                    max_position_pct=max_position_pct,
+                    target_risk_pct=target_risk_pct,
                 )
             except ValueError:
                 continue  # an invalid combination, e.g. fast >= slow
@@ -180,6 +185,8 @@ def walk_forward(
             hysteresis_rank=hysteresis_rank,
             cost_bps=cost_bps,
             slippage_bps=slippage_bps,
+            max_position_pct=max_position_pct,
+            target_risk_pct=target_risk_pct,
         )
         # Score only the test span. The warmup history kept by _slice would
         # otherwise be counted again in every later window.
@@ -200,12 +207,15 @@ def walk_forward(
         )
         oos_returns.append(scored_days)
         oos_bench.append(bench_days)
+        oos_gross.append(tested.gross_exposure[tested.gross_exposure.index >= test_start])
 
-    stitched = _stitch(oos_returns, oos_bench)
+    stitched = _stitch(oos_returns, oos_bench, oos_gross)
     return WalkForwardResult(windows=windows, stitched=stitched, grid_size=len(combos))
 
 
-def _stitch(returns: list[pd.Series], bench: list[pd.Series]) -> PortfolioResult:
+def _stitch(
+    returns: list[pd.Series], bench: list[pd.Series], gross: list[pd.Series]
+) -> PortfolioResult:
     """Join the test slices into one continuous out-of-sample record.
 
     This is the number to quote. Each window's parameters were fixed before its
@@ -214,6 +224,9 @@ def _stitch(returns: list[pd.Series], bench: list[pd.Series]) -> PortfolioResult
     """
     joined = pd.concat(returns).sort_index()
     joined_bench = pd.concat(bench).sort_index()
+    # Averaged rather than dropped like turnover: gross exposure is a level, not
+    # a per-window rate, so the mean across joined slices is a real quantity.
+    joined_gross = pd.concat(gross).sort_index()
     equity = (1 + joined).cumprod()
     benchmark = (1 + joined_bench).cumprod()
     ann_alpha, beta = alpha_beta(joined, joined_bench)
@@ -237,4 +250,6 @@ def _stitch(returns: list[pd.Series], bench: list[pd.Series]) -> PortfolioResult
         n_positions=0,
         alpha=ann_alpha,
         beta=beta,
+        avg_gross_exposure=float(joined_gross.mean()),
+        gross_exposure=joined_gross,
     )
