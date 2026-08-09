@@ -53,3 +53,17 @@ class Broker(Protocol):
         is pending.
         """
         ...
+
+    def open_order_ids(self) -> set[str]:
+        """Every order the broker still considers live, as broker order ids.
+
+        The ledger records what we *intended*; this is what the venue will
+        actually still execute. Nothing else can answer that question: fills are
+        looked up one id at a time, and only from ids the ledger already knows
+        about, so an order the ledger has lost sight of is invisible to every
+        other call in this interface. That is not hypothetical. On 2026-08-09
+        the simulated broker was found holding 472 orders it still considered
+        live that the ledger had recorded as cancelled two weeks earlier, from
+        before `cancel_order` existed.
+        """
+        ...

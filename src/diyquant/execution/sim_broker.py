@@ -143,6 +143,19 @@ class SimulatedBroker:
         )
         self._conn.commit()
 
+    def open_order_ids(self) -> set[str]:
+        """Orders still resting here, in the same id form `submit_market_order` returns.
+
+        Formatted as `sim-<id>` rather than returned raw so the caller can
+        compare against the ids the ledger stored, which is the whole purpose.
+        A bare integer would need the prefix reapplied at every call site, and
+        the one that forgot would report every order as orphaned.
+        """
+        return {
+            f"sim-{row['id']}"
+            for row in self._conn.execute("SELECT id FROM orders WHERE status = 'accepted'")
+        }
+
     def get_order_fill(self, broker_order_id: str) -> FillInfo:
         order_id = int(broker_order_id.removeprefix("sim-"))
         order = self._conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()

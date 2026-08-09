@@ -186,3 +186,38 @@ def test_a_database_predating_cancellation_is_migrated(tmp_path):
     )
     broker.cancel_order("sim-1")
     assert broker.get_order_fill("sim-1").status == "canceled"
+
+
+def test_open_order_ids_reports_what_is_still_resting(tmp_path):
+    broker = make_broker(tmp_path, n_days=1)
+    first = broker.submit_market_order("AAPL", 10)
+    second = broker.submit_market_order("AAPL", -5)
+
+    assert broker.open_order_ids() == {first.broker_order_id, second.broker_order_id}
+
+
+def test_open_order_ids_drops_cancelled_and_filled_orders(tmp_path):
+    """The set must shrink as orders finish, or the drift check cries wolf every cycle."""
+    broker = make_broker(tmp_path, n_days=1)
+    kept = broker.submit_market_order("AAPL", 10)
+    withdrawn = broker.submit_market_order("AAPL", 10)
+    executed = broker.submit_market_order("AAPL", 10)
+
+    broker.cancel_order(withdrawn.broker_order_id)
+    # A later bar appears, so this one executes at its open.
+    broker._bars = {"AAPL": make_bars(5)}
+    assert broker.get_order_fill(executed.broker_order_id).status == "filled"
+
+    assert broker.open_order_ids() == {kept.broker_order_id}
+
+
+def test_open_order_ids_uses_the_id_form_submit_returned(tmp_path):
+    """These ids are compared against ones the ledger stored, so the form must match.
+
+    Returning bare integers would need the `sim-` prefix reapplied at every call
+    site, and the caller that forgot would report every order as orphaned.
+    """
+    broker = make_broker(tmp_path, n_days=1)
+    submitted = broker.submit_market_order("AAPL", 10)
+
+    assert broker.open_order_ids() == {submitted.broker_order_id}

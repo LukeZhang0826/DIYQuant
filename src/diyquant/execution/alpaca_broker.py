@@ -6,8 +6,8 @@ market-on-open (OPG) so a signal from bar T executes at bar T+1's open.
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide, TimeInForce
-from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
+from alpaca.trading.requests import GetOrdersRequest, MarketOrderRequest
 
 from diyquant.execution.base import AccountState, FillInfo, OrderResult
 
@@ -51,6 +51,18 @@ class AlpacaBroker:
             filled_qty=int(float(order.filled_qty or 0)),
             avg_price=float(order.filled_avg_price or 0.0),
         )
+
+    def open_order_ids(self) -> set[str]:
+        """Alpaca's own view of what is still live.
+
+        Written from the documented API and **never exercised against a real
+        account**: Alpaca is unavailable to Canadian residents, so this whole
+        adapter is unused (see CLAUDE.md, Phase 2). Treat it as unverified until
+        someone runs it, and verify against a real response before trusting it
+        the way the simulated broker's version is trusted.
+        """
+        orders = self._client.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN))
+        return {str(order.id) for order in orders}
 
     def cancel_order(self, broker_order_id: str) -> None:
         """Swallow APIError: Alpaca 422s an order that already filled or cancelled.

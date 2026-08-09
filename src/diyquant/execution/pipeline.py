@@ -2,7 +2,8 @@
 
 Order of operations each cycle:
   1. Reconcile fills for orders submitted in earlier cycles.
-  2. Cancel whatever is still resting after step 1 (see below).
+  2. Cancel whatever is still resting after step 1 (see below), then check the
+     ledger and the broker still agree on which orders are live.
   3. Snapshot account equity.
   4. If a halt is active, stop here (a human must clear it).
   5. Kill-switch: if equity dropped past the daily limit since the previous
@@ -154,6 +155,59 @@ def _cancel_stale_orders(
         report.notes.append("left pending, not reconsidered this cycle: " + ", ".join(sorted(left)))
 
 
+def _check_order_status_drift(broker: Broker, ledger: Ledger, report: CycleReport) -> None:
+    """Assert the invariant the two books are supposed to share.
+
+    After steps 1 and 2 the set of orders resting at the broker must be exactly
+    the set the ledger still calls pending. Reconciliation only ever walks the
+    *ledger's* pending list, so it can correct the ledger from the broker but is
+    structurally blind in the other direction: an order the ledger has already
+    closed is never asked about again, and can rest at the broker forever.
+
+    That is not a hypothetical. On 2026-08-09 the simulated broker was found
+    holding **472** orders it still considered live, from 2026-07-23, which the
+    ledger had recorded as cancelled. They had been cancelled before
+    `cancel_order()` existed, so only the ledger was updated, and the divergence
+    sat unnoticed for two weeks because nothing compared the two.
+
+    Those 472 were inert only by luck of implementation: nothing enumerated
+    broker-side orders, so nothing filled them. Anything that did would have
+    executed all 472 at the next open, against an account funding five
+    positions, and `SimulatedBroker` applies no cash check to stop it.
+
+    Reports rather than repairs, deliberately. Cancelling on a mismatch would
+    act destructively on the assumption that the ledger is right, and a
+    divergence is precisely the state in which that assumption is unproven.
+    `scripts/cancel_pending_orders.py` clears them once a human has looked.
+
+    Counts and a sample, never the full list: 472 ids would have blown past
+    Discord's message limit, and truncation keeps the head, so a long note here
+    would push the rest of the cycle report out of the alert entirely.
+    """
+    resting = broker.open_order_ids()
+    intended = {o["broker_order_id"] for o in ledger.pending_orders() if o["broker_order_id"]}
+
+    orphaned = resting - intended
+    if orphaned:
+        sample = ", ".join(sorted(orphaned)[:5])
+        report.notes.append(
+            f"ORDER DRIFT: {len(orphaned)} order(s) live at the broker that the ledger has "
+            f"closed, e.g. {sample}. Nothing will fill them this cycle, but they are live "
+            f"at the venue: clear with scripts/cancel_pending_orders.py"
+        )
+
+    # The other direction cannot normally survive step 1, which resolves every
+    # pending order against the broker. If it does, the ledger is expecting a
+    # fill from an order that no longer exists to produce one.
+    missing = intended - resting
+    if missing:
+        sample = ", ".join(sorted(missing)[:5])
+        report.notes.append(
+            f"ORDER DRIFT: {len(missing)} order(s) the ledger calls pending are not live at "
+            f"the broker, e.g. {sample}. The ledger is awaiting a fill that cannot arrive."
+        )
+
+
 def _flatten_all(
     broker: Broker, ledger: Ledger, symbols: list[str], reason: str, report: CycleReport
 ) -> None:
@@ -195,6 +249,10 @@ def run_once(
     # Before the halt check on purpose: a halted pipeline must not leave live
     # orders resting at the broker while it waits for a human.
     _cancel_stale_orders(broker, ledger, report, reconsidered)
+    # Only meaningful once both books have been brought up to date, hence after
+    # steps 1 and 2 rather than at the top: run first, it would report every
+    # order still mid-reconciliation as drift.
+    _check_order_status_drift(broker, ledger, report)
 
     account = broker.get_account()
     baseline = ledger.last_equity_snapshot()

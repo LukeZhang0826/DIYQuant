@@ -281,6 +281,28 @@ the next cycle and both eventually fill, doubling the position past the cap mean
 A ranking layer that scores on something better than trend gap is still Stage 4/7 in
 `docs/roadmap-vision.md`; this is the deliberately simple version of it.
 
+## The two books must agree on what is live: checked since 2026-08-09
+
+Reconciliation walks the **ledger's** pending list and corrects the ledger from the broker.
+That makes it structurally blind in the other direction: an order the ledger has already
+closed is never asked about again and can rest at the broker forever. On 2026-08-09 the
+live broker was found holding **472 orders it still considered live**, from 2026-07-23,
+which the ledger had recorded as cancelled. They were cancelled before
+`SimulatedBroker.cancel_order()` existed, so only the ledger was updated, and nothing
+compared the two for two weeks.
+
+They were inert purely by implementation accident: nothing enumerated broker-side orders,
+so nothing filled them. Anything that did would have executed all 472 at the next open
+against an account funding five positions, and the broker applies no cash check to stop it.
+
+`Broker.open_order_ids()` now exists for exactly this, and `_check_order_status_drift` runs
+as part of step 2, after reconciliation and cancellation have brought both sides up to date.
+It **reports and does not repair**: cancelling on a mismatch would act destructively on the
+assumption that the ledger is right, and a divergence is precisely the state where that
+assumption is unproven. Clearing stays a human action via
+`scripts/cancel_pending_orders.py`. Notes carry a count and five sample ids, never the full
+list, because 472 ids would overflow Discord's message limit and truncation keeps the head.
+
 ## Communication
 
 The owner is new to quantitative finance and git. When reporting results or explaining

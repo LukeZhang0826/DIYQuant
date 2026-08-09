@@ -33,6 +33,20 @@ class FakeBroker:
     def cancel_order(self, broker_order_id):
         self.cancelled.append(broker_order_id)
 
+    def open_order_ids(self):
+        """Whatever this broker still calls accepted and has not been asked to withdraw.
+
+        Deliberately derived from `fills` rather than tracked separately, so a
+        test that sets up a resting order gets a broker that agrees it is
+        resting. A stub returning an empty set would make every drift check
+        pass by construction and test nothing.
+        """
+        return {
+            oid
+            for oid, fill in self.fills.items()
+            if fill.status == "accepted" and oid not in self.cancelled
+        }
+
 
 class ConstantSignal:
     def __init__(self, value: int):
@@ -623,6 +637,34 @@ def test_an_order_still_fills_across_two_real_cycles(tmp_path):
     assert ledger.position("AAPL") == 20
 
 
+def test_a_ledger_only_cancellation_is_caught_by_the_next_cycle(tmp_path):
+    """Reproduces the 2026-08-09 finding end to end, against the real broker.
+
+    Before `cancel_order()` existed, cancelling updated the ledger alone. The
+    order stayed live at the broker with nothing left to reconcile it, because
+    reconciliation only walks the ledger's pending list. That is exactly how 472
+    orders sat live for two weeks. FakeBroker cannot show it: only the real
+    broker keeps its own order table that can disagree.
+    """
+    sim_path = tmp_path / "sim.sqlite"
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    bars = {"AAPL": make_ohlc([100.0] * 5)}
+
+    first, _ = cycle(sim_path, ledger, bars)
+    assert first.orders_submitted == 1
+    resting = ledger.pending_orders()[0]
+
+    # The old, half-finished cancellation: ledger updated, broker untouched.
+    ledger.update_order_status(resting["id"], "canceled")
+
+    second, _ = cycle(sim_path, ledger, bars)
+
+    drift = [n for n in second.notes if "ORDER DRIFT" in n]
+    assert len(drift) == 1
+    assert "1 order(s) live at the broker" in drift[0]
+    assert resting["broker_order_id"] in drift[0]
+
+
 def test_an_order_the_cycle_cannot_replace_is_left_alone(tmp_path):
     """The invariant: never withdraw an order nothing will put back.
 
@@ -691,6 +733,96 @@ def test_a_demoted_tickers_exit_order_is_not_withdrawn(tmp_path):
     assert broker.cancelled == []
     assert report.orders_cancelled == 0
     assert order_id in [row["id"] for row in ledger.pending_orders()]
+
+
+def test_an_order_live_at_the_broker_that_the_ledger_closed_is_reported(tmp_path):
+    """The 2026-08-09 regression, in miniature.
+
+    Reconciliation only ever walks the ledger's pending list, so an order the
+    ledger has already closed is never asked about again and can rest at the
+    broker indefinitely. 472 of them did, for two weeks, because nothing
+    compared the two books.
+    """
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    broker = FakeBroker(
+        equity=10_000,
+        fills={"ghost": FillInfo(status="accepted", filled_qty=0, avg_price=0.0)},
+    )
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    drift = [n for n in report.notes if "ORDER DRIFT" in n]
+    assert len(drift) == 1
+    assert "1 order(s) live at the broker" in drift[0]
+    assert "ghost" in drift[0]
+
+
+def test_a_healthy_cycle_reports_no_drift(tmp_path):
+    """Guards against a check that fires every cycle and trains everyone to ignore it."""
+    broker = FakeBroker(
+        equity=10_000,
+        positions={"AAPL": 20},
+        fills={"a1": FillInfo(status="filled", filled_qty=20, avg_price=100.0)},
+    )
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    pending(ledger, qty=20, broker_order_id="a1")
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    assert report.fills_reconciled == 1
+    assert not [n for n in report.notes if "ORDER DRIFT" in n]
+
+
+def test_a_ledger_order_the_broker_does_not_hold_is_reported(tmp_path):
+    """The other direction: the ledger awaiting a fill that can never arrive."""
+
+    class ForgetfulBroker(FakeBroker):
+        def open_order_ids(self):
+            return set()
+
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    pending(ledger, broker_order_id="abc")
+    broker = ForgetfulBroker(
+        equity=10_000,
+        fills={"abc": FillInfo(status="accepted", filled_qty=0, avg_price=0.0)},
+    )
+
+    report = run_once(
+        broker=broker,
+        ledger=ledger,
+        bars_by_symbol={"MSFT": make_bars(100.0)},  # AAPL absent, so it is not reconsidered
+        strategy=ConstantSignal(1),
+        strategy_name="constant",
+        settings=make_settings(),
+    )
+
+    drift = [n for n in report.notes if "ORDER DRIFT" in n]
+    assert len(drift) == 1
+    assert "not live at the broker" in drift[0]
+
+
+def test_the_drift_note_samples_rather_than_listing_every_order(tmp_path):
+    """472 ids would overflow Discord, and truncation keeps the head.
+
+    A note long enough to blow the message limit would push the rest of the
+    cycle report out of the alert entirely, so the check would break the very
+    reporting it exists to feed.
+    """
+    ledger = Ledger(tmp_path / "ledger.sqlite")
+    broker = FakeBroker(
+        equity=10_000,
+        fills={
+            f"ghost-{i:03d}": FillInfo(status="accepted", filled_qty=0, avg_price=0.0)
+            for i in range(472)
+        },
+    )
+
+    report = run(broker, ledger, target=1, price=100.0)
+
+    drift = next(n for n in report.notes if "ORDER DRIFT" in n)
+    assert "472 order(s) live at the broker" in drift
+    assert drift.count("ghost-") == 5
+    assert len(drift) < 400
 
 
 def wiggling_bars(price: float, daily_move_pct: float, periods: int = 61) -> pd.DataFrame:
