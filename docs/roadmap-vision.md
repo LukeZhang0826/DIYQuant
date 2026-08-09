@@ -15,6 +15,19 @@ read it before planning anything below, because several stages were written assu
 edge that has not been demonstrated. The ablations also re-ordered what comes next: Stage 5
 now precedes Stage 2. See "What changed after measuring" at the end of the stage list.
 
+> **Updated 2026-08-09, and the numbers above are the ones to stop quoting.** Every figure
+> in that paragraph comes from **five** test windows. Re-run on 2005-2026, eighteen windows,
+> the conclusions move so far that three of them invert. Momentum's +226pp edge became
+> -23pp; the flat-cap baseline's +93.3% became **-1.6% with a -94.7% drawdown**; hysteresis
+> went from "candidate for removal" to clearly paying. **Five windows cannot tell a strategy
+> from a good year**, and that is the single most useful thing this project has measured.
+>
+> Two consequences for everything below. **Stage 5's beta-targeting half is cancelled**, not
+> deferred: it was promoted on an accidental -0.66 beta that volatility sizing had already
+> removed, and the hedge built for it lost on every measure including drawdown. What remains
+> of Stage 5 is the broker. And any number in this file without a window count behind it
+> should be treated as a hypothesis. `baseline.md` is authoritative; this file is the plan.
+
 ## The honest framing (read before dreaming)
 
 The gap between an *impressive* trading system and one that *makes money* is enormous.
@@ -77,8 +90,11 @@ The thing beginners skip and the thing that separates real edge from self-decept
       `backtest/walkforward.py`, parameters chosen per training slice.
 - [x] Overfitting defense: testing 100 tweaks and keeping the best is luck, not edge.
       The grid is deliberately coarse and `ablate.py` warns about multiple testing.
-- [x] Cost and capacity realism, partly: costs and slippage are modelled and priced
-      (~21pp over the test period). Capacity and short borrow are not.
+- [x] Cost and capacity realism, mostly: costs, slippage **and short borrow** are modelled
+      and priced. Costs are ~10pp over 21 years (the ~21pp figure came from the 5-window
+      sample). Borrow ships at 200bp/yr since 2026-08-09 and costs ~0.44%/yr at the book's
+      0.223 average short exposure. Capacity and availability are still unmodelled: a name
+      that cannot be borrowed at any price is shorted here regardless.
 - [ ] Regime analysis: the per-window table shows the shape (wins in falling markets,
       bleeds in bull years) but there is no explicit regime breakdown yet.
 
@@ -93,9 +109,12 @@ backtest is survivorship-biased. Fixing that needs point-in-time constituent his
   go 5 -> 10 -> 20 -> 50, so diluting the ranking dilutes the skill: the layer is doing
   real work, not just capping order count. One slot is *not* better than five, hitting a
   91.6% drawdown.
-- **Hysteresis: measured and it is not paying.** The buffer costs ~70pp against ~21pp of
-  total transaction costs, so it spends more in missed rotation than it saves in fees.
-  Candidate for removal, but re-validate on data the ablation runs did not touch first.
+- **Hysteresis: it pays. Re-validated 2026-08-09 and the earlier verdict was wrong.** On
+  five windows the buffer looked like a ~70pp cost and was flagged for removal. On eighteen,
+  removing it costs 65pp and widening it to 20 gains 49pp with the best Sharpe and alpha of
+  any flat-cap row. Keep it. Worth remembering as the cheapest lesson in the file: that was
+  a confident, mechanism-backed argument from a real measurement, and it was wrong only
+  because the measurement had five windows under it.
 - **The ranking metric shorts high-beta names by construction.** `|fast - slow| / slow`
   takes an absolute value, so it ranks on trend magnitude regardless of direction, and
   the largest downward gaps in a rising market belong to volatile names. Measured: median
@@ -110,6 +129,19 @@ backtest is survivorship-biased. Fixing that needs point-in-time constituent his
   chose: the long leg runs +0.47 beta on 0.61 gross weight, the short leg -1.18 on 0.36.
   Neutralising that exposure deliberately keeps the alpha. Going long-only instead trades
   it for market direction and abandons the thesis.
+
+  > **The beta half of that is finished and the answer was no, 2026-08-09.** The -0.66 was
+  > a property of the flat cap. Volatility sizing (shipped 2026-08-08) already took the
+  > 21-year beta to **+0.09** as a side effect nobody designed, so by the time an index
+  > hedge existed there was almost nothing left to neutralise. Measured, it cost 610pp of
+  > return, cut Sharpe 0.66 -> 0.41, more than doubled gross exposure 0.65 -> 1.45, **made
+  > drawdown worse (-46.1% -> -58.5%)** and won 6 of 18 windows. `risk/hedge.py` stays in
+  > the repo, tested and disabled. Do not re-propose it without first showing the beta is
+  > back. Table in [`baseline.md`](baseline.md).
+  >
+  > The **long/short execution** half of this bullet still stands and is now the whole of
+  > Stage 5: the simulated broker models shorting as free, with no borrow accrual, no margin
+  > and no cash check, so it cannot honestly settle the shorts this track depends on.
 - Volatility targeting and correlation-aware sizing (do not hold 8 tech longs that are
   really one bet).
 - Dynamic risk: the kill-switch is a floor; scale leverage down in drawdowns.
@@ -193,7 +225,7 @@ Understand how much of the "edge" is just the market rising.
   different signal types (momentum, mean-reversion) for diversity.
 - Done when: you can state what fraction of return is market beta vs real alpha. (Tracks A/B)
 
-### Stage 5 - Shorting and market-neutral [L] - DO THIS NEXT
+### Stage 5 - Shorting: settle it honestly [L] - DO THIS NEXT (half of it)
 The execution + risk work that unlocks the market-neutral thesis.
 
 > **Promoted ahead of Stages 2-4 on evidence, 2026-08-01.** The ablations found persistent
@@ -204,11 +236,31 @@ The execution + risk work that unlocks the market-neutral thesis.
 > Add to the deliverables below: explicit beta targeting, so exposure is a choice rather
 > than a by-product of which names the ranking happened to pick.
 
+> **Half cancelled, half sharpened, 2026-08-09.** The beta-targeting deliverable added
+> above is **done and rejected**: the -0.66 belonged to the flat cap, volatility sizing had
+> already taken the 21-year beta to +0.09, and the hedge built for it lost on return,
+> Sharpe, alpha and drawdown while winning 6 of 18 windows. See the Track D note above and
+> [`baseline.md`](baseline.md). `risk/hedge.py` stays disabled in the repo so it can be
+> re-measured in twenty minutes if the beta ever comes back.
+>
+> **What remains is the part that was always the real work**, and it is a measurement
+> defect rather than a portfolio one: `SimulatedBroker` models shorting as **free**. No
+> borrow accrual, no margin requirement, no cash check. Backtest and paper now disagree
+> about what a short costs, since the backtest started charging borrow on 2026-08-09 and
+> the broker did not. Everything downstream, Stage 6 pairs especially, is built on shorts
+> being settled honestly, so this is the load-bearing piece.
+
 - Deliverables: simulated broker and risk module correctly open, hold, and settle short
-  positions; kill-switch and sizing handle shorts; a long/short market-neutral variant runs
-  end-to-end in backtest and paper.
-- Done when: a short is opened, marked, and closed correctly in paper, and the kill-switch
-  behaves with shorts on the book. (Track D)
+  positions, **including borrow accrued daily, a margin model and a cash check**; kill-switch
+  and sizing handle shorts; a long/short variant runs end-to-end in backtest and paper.
+- Design already sketched: the broker has no concept of a day passing (it only acts inside
+  `get_order_fill`), so borrow needs an explicit accrual step in `run_once` **between
+  reconciling fills and snapshotting equity**, with a persisted last-accrued date so a
+  re-run cannot double-charge. It feeds equity and therefore the daily kill-switch, though
+  the magnitude is small: 200bp/yr on 0.223 short exposure is ~0.02%/day against a 3% limit.
+- Done when: a short is opened, marked, carried at a cost, and closed correctly in paper;
+  the broker refuses what the account cannot fund; and the kill-switch behaves with shorts
+  on the book. (Track D)
 
 ### Stage 6 - Cointegration / pairs (first real quant-math strategy) [L]
 Built on Stage 5's shorting. Your first statistical-arbitrage strategy.
@@ -262,6 +314,43 @@ Three things the measurement settled that reasoning had not:
 Standing rule from here: **no config change ships on the strength of one test period.**
 Nine ablation configs against one out-of-sample window is multiple testing, and the best of
 nine beats the baseline on luck alone.
+
+## What changed after measuring again (2026-08-09)
+
+The table and the three findings above rest on **five** test windows. Re-run on 2005-2026,
+eighteen windows, only one of the three survives. This section supersedes it.
+
+| | Order after 2026-08-01 | Order now | Why |
+| --- | --- | --- | --- |
+| Next | Stage 5 (market-neutral) | **Stage 5, broker half only** | Beta targeting was built, measured and rejected; honest short settlement is what is left |
+| After | Stage 4 (know your beta) | Stage 4, mostly done | `alpha_beta()` ships, and beta is now measured routinely in every ablation |
+| Deferred | Stages 2 and 3 | Unchanged | Still waiting on `news_scores` history |
+
+1. **Selection still earns its place.** Alpha decays monotonically 5 -> 10 -> 20 -> 50 in
+   *both* samples. The only finding that held twice, and so the only one to trust.
+2. **Hysteresis reversed.** It pays, and more of it pays more. Finding 2 above is wrong.
+3. **The long-only row is survivorship bias, not a finding.** At 21 years it returns
+   **+65,725%**, roughly 37%/yr, with the *highest* alpha in the table. It went from +805%
+   (8y) to +65,725% (21y) because the bias compounds with sample length and lands entirely
+   on the long side: the universe is today's S&P 500 projected back, so a concentrated
+   five-name long book is handed the survivors by construction. Finding 3's arithmetic no
+   longer holds, but its conclusion does, for a better reason: **still do not go long-only.**
+4. **Volatility sizing is the strongest result in the project**, and the only major one that
+   got *stronger* on a bigger sample. The flat cap loses 94.7% over 21 years; sizing by
+   volatility returns +571% to +953% at a third of the drawdown. `target_risk_pct` is a
+   leverage knob, not a performance one: alpha per unit of gross exposure is flat at ~20%
+   across 0.3 / 0.4 / 0.5, so no setting on it buys edge. Live stays at 0.4 for kill-switch
+   headroom, and that choice now gives up nothing measurable.
+
+Standing rule, strengthened: **no config change ships on the strength of one test period,
+and no strategy claim survives on five windows.** The clearest demonstration is momentum,
+which beat the equal-weight universe by +226pp on five windows and trailed it by 23pp on
+eighteen, with nothing changed but the number of independent periods.
+
+Corollary found the same day: **a walk-forward that re-tunes annually will make almost any
+new cost look survivable**, because it optimises around it. A 1000bp borrow costs the
+walk-forward 7% of terminal equity and a fixed-parameter run 62%. The live pipeline runs a
+fixed 20/50 and re-tunes never, so measure every future cost both ways.
 
 ## Path to real money (the actual sequence)
 

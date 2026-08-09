@@ -131,10 +131,20 @@ drawdown. Numbers, method and caveats in [`docs/baseline.md`](docs/baseline.md);
 
 That is the harness working, not the project failing. The shape underneath is informative:
 it earns its keep when the market falls (2022: +35.8% against a -10.1% market) and bleeds
-in bull years. Component ablations then found persistent stock-picking alpha (~33-36%)
-wrapped in an accidental **-0.66 beta**, because the ranking metric takes an absolute value
-and so shorts high-beta names by construction. The defect is portfolio construction rather
-than the signal, which is why market-neutral work is next.
+in bull years.
+
+**Then the sample was widened from 8 years to 21, and most of that paragraph stopped being
+true.** Five test windows became eighteen, nothing else changed, and the conclusions moved
+far enough to invert three of them. The -0.66 beta turned out to belong to the old flat
+position cap rather than to the strategy: under the volatility sizing shipped 2026-08-08 the
+21-year beta is **+0.09**. An index hedge built to neutralise that beta was measured and
+**rejected**, having made drawdown worse while winning 6 of 18 windows. A hysteresis buffer
+previously flagged for removal turned out to pay. And the flat-cap configuration that scored
++93.3% over five windows loses **94.7%** over eighteen.
+
+**Five windows cannot tell a strategy from a good year.** That is the most useful thing this
+project has measured, and it is why every number above carries its window count. Current
+findings live in [`docs/baseline.md`](docs/baseline.md), which supersedes any figure here.
 
 What the track record *can* support, honestly:
 
@@ -156,16 +166,26 @@ What the track record *can* support, honestly:
       run stays cheap at scale
 - [x] **Selection**: rank the ~470 daily signals and fund `risk.max_positions` of
       them, with a hysteresis buffer so a name slipping one place is not sold and
-      rebought. Since measured: the ranking earns its place, the hysteresis buffer
-      does not
+      rebought. Since measured over 21 years: both earn their place. The ranking
+      holds in every sample, and the buffer, once thought a ~70pp cost, pays
 - [x] **Stale order cancellation**: the cycle withdraws resting orders it no longer
       wants, after reconciliation and only for symbols it can reconsider, so an
       unfilled order cannot have a second one stacked on top of it
 - [x] **Validation harness** (roadmap Stage 1): walk-forward out-of-sample scoring of
       the pipeline as it actually runs, a report card with alpha and beta, and a
       written baseline to beat in [`docs/baseline.md`](docs/baseline.md)
-- [ ] **Market-neutral** (roadmap Stage 5, next): the book carries real alpha inside an
-      unmanaged -0.66 beta. Make exposure a choice rather than a by-product
+- [x] **Volatility position sizing**: size each name so a one-standard-deviation day moves
+      the account by a set amount, after a single overnight gap tripped the kill-switch on
+      a flat 20% cap. The strongest result here, and the only major one that got *stronger*
+      when the sample widened
+- [x] **Beta targeting** (roadmap Stage 5, first half): built, measured out-of-sample, and
+      **rejected**. Volatility sizing had already removed the exposure it was meant to fix,
+      so the hedge paid full costs to correct nothing and made drawdown worse. The code
+      stays in the repo, disabled, so it can be re-measured if the beta ever returns
+- [ ] **Honest short settlement** (Stage 5, what is left, next): the simulated broker still
+      models shorting as free, with no borrow accrual, no margin and no cash check. The
+      backtest started charging borrow on 2026-08-09 and the broker did not, so the two
+      now disagree about what a short costs
 - [ ] **Sentiment as a signal** (Stage 2, blocked): needs months of archived news before
       the gate can be evaluated at all. `news_scores` began collecting 2026-08-01
 - [ ] **Phase 4**: intraday cadence, a signal that defines "notable", reworked
