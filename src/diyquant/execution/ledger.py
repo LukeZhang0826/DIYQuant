@@ -42,6 +42,18 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
     cash REAL NOT NULL,
     equity REAL NOT NULL
 );
+-- Deliberately NOT equity_snapshots. A mid-session mark written into that table
+-- would become the baseline the next cycle measures its daily drawdown against,
+-- turning a 3% daily limit into "3% since the last mark". Separate table, so the
+-- monitor can run as often as it likes without touching the kill-switch.
+CREATE TABLE IF NOT EXISTS intraday_marks (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    equity REAL NOT NULL,
+    anchor_equity REAL NOT NULL,
+    drawdown_pct REAL NOT NULL,
+    breached INTEGER NOT NULL CHECK (breached IN (0, 1))
+);
 CREATE TABLE IF NOT EXISTS halts (
     id INTEGER PRIMARY KEY,
     triggered_at TEXT NOT NULL,
@@ -166,6 +178,54 @@ class Ledger:
     def last_equity(self) -> float | None:
         row = self.last_equity_snapshot()
         return float(row["equity"]) if row else None
+
+    def equity_snapshot_before(self, ts: str) -> sqlite3.Row | None:
+        """Latest snapshot strictly older than `ts`. The anchor for an intraday check.
+
+        `last_equity_snapshot` is the wrong function for anything that runs more
+        than once a day. Called at 15:00 it returns the mark from 14:45, and a
+        drawdown measured against that answers "how much did we lose in the last
+        quarter hour", which no limit in this project is denominated in. Passing
+        today's midnight here pins the comparison to yesterday's close, which is
+        what "daily drawdown" has always meant.
+
+        Compares ISO-8601 UTC strings, which sort lexicographically in time
+        order, so this is a plain string comparison and not a date parse.
+        """
+        return self._conn.execute(
+            "SELECT * FROM equity_snapshots WHERE ts < ? ORDER BY ts DESC LIMIT 1",
+            (ts,),
+        ).fetchone()
+
+    # -- intraday marks ----------------------------------------------------
+
+    def record_intraday_mark(
+        self,
+        equity: float,
+        anchor_equity: float,
+        drawdown_pct: float,
+        breached: bool,
+        ts: str | None = None,
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO intraday_marks (ts, equity, anchor_equity, drawdown_pct, breached)"
+            " VALUES (?,?,?,?,?)",
+            (ts or _now(), equity, anchor_equity, drawdown_pct, int(breached)),
+        )
+        self._conn.commit()
+
+    def last_intraday_mark_since(self, ts: str) -> sqlite3.Row | None:
+        """Most recent mark at or after `ts`, for "has today already alerted".
+
+        Without this the monitor re-alerts on every run for as long as the book
+        stays under water, which on a 15-minute schedule is a couple of dozen
+        identical messages in an afternoon. Alerting on the crossing instead
+        keeps the channel worth reading.
+        """
+        return self._conn.execute(
+            "SELECT * FROM intraday_marks WHERE ts >= ? ORDER BY ts DESC LIMIT 1",
+            (ts,),
+        ).fetchone()
 
     # -- sentiment gate ----------------------------------------------------
 

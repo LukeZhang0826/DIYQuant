@@ -59,6 +59,11 @@ risk:                          # enforced in Phase 2 live pipeline; documented n
                                # region is flat and 0.4 sits inside it. Picking 0.5 for its
                                # return would be selecting the winner of a multiple-testing
                                # contest, which is what docs/baseline.md warns against.
+  intraday_warn_pct: 2.0       # scripts/monitor_intraday.py speaks up at this mid-session
+                               # drawdown, below max_daily_drawdown_pct so there is warning
+                               # before the evening cycle would halt. The monitor never
+                               # trades: the broker cannot fill intraday, so an early stop
+                               # would execute at the same next-day open as a late one.
   vol_lookback_days: 20        # trading days of daily returns behind the volatility estimate.
                                # Fewer bars than this means volatility is unknown, and an
                                # unknown volatility gets no position rather than a full one.

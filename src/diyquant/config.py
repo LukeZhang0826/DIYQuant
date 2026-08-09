@@ -49,6 +49,7 @@ class RiskConfig(BaseModel):
     hysteresis_rank: int = 10
     target_risk_pct: float = 0.0  # 0 disables volatility scaling: flat cap for everyone
     vol_lookback_days: int = 20
+    intraday_warn_pct: float = 2.0  # mid-session drawdown that earns a Discord message
 
 
 class ExecutionConfig(BaseModel):

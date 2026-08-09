@@ -103,3 +103,62 @@ def test_the_same_headline_counts_once_per_symbol(tmp_path):
     ledger.record_news_scores("AMD", item)
 
     assert {r["symbol"] for r in ledger.news_scores()} == {"NVDA", "AMD"}
+
+
+def test_anchor_ignores_snapshots_from_today(tmp_path):
+    """The property that keeps a frequent monitor from breaking the daily limit.
+
+    Anchored to the most recent snapshot, a check at 15:00 would measure the loss
+    since 14:45 and call it a daily drawdown. equity_snapshot_before pins it to
+    the last one from before today instead.
+    """
+    ledger = make_ledger(tmp_path)
+    ledger.record_equity_snapshot(cash=0, equity=100_000, ts="2026-08-03T23:00:00+00:00")
+    ledger.record_equity_snapshot(cash=0, equity=95_000, ts="2026-08-04T14:45:00+00:00")
+
+    anchor = ledger.equity_snapshot_before("2026-08-04T00:00:00+00:00")
+    assert float(anchor["equity"]) == 100_000
+
+    # last_equity_snapshot is the trap this exists to avoid.
+    assert float(ledger.last_equity_snapshot()["equity"]) == 95_000
+
+
+def test_anchor_is_none_before_any_history(tmp_path):
+    ledger = make_ledger(tmp_path)
+    ledger.record_equity_snapshot(cash=0, equity=100_000, ts="2026-08-04T14:45:00+00:00")
+    assert ledger.equity_snapshot_before("2026-08-04T00:00:00+00:00") is None
+
+
+def test_intraday_marks_do_not_become_the_daily_baseline(tmp_path):
+    """Marks live in their own table, so the kill-switch never sees them."""
+    ledger = make_ledger(tmp_path)
+    ledger.record_equity_snapshot(cash=0, equity=100_000, ts="2026-08-03T23:00:00+00:00")
+    ledger.record_intraday_mark(
+        equity=94_000,
+        anchor_equity=100_000,
+        drawdown_pct=6.0,
+        breached=True,
+        ts="2026-08-04T17:00:00+00:00",
+    )
+    assert float(ledger.last_equity_snapshot()["equity"]) == 100_000
+
+
+def test_last_mark_since_finds_todays_worst_reported(tmp_path):
+    ledger = make_ledger(tmp_path)
+    ledger.record_intraday_mark(
+        equity=99_000,
+        anchor_equity=100_000,
+        drawdown_pct=1.0,
+        breached=False,
+        ts="2026-08-03T17:00:00+00:00",
+    )
+    ledger.record_intraday_mark(
+        equity=97_500,
+        anchor_equity=100_000,
+        drawdown_pct=2.5,
+        breached=False,
+        ts="2026-08-04T15:00:00+00:00",
+    )
+    since = ledger.last_intraday_mark_since("2026-08-04T00:00:00+00:00")
+    assert float(since["drawdown_pct"]) == 2.5
+    assert ledger.last_intraday_mark_since("2026-08-05T00:00:00+00:00") is None

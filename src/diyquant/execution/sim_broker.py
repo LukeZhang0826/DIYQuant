@@ -101,6 +101,18 @@ class SimulatedBroker:
                 positions_value += row["qty"] * float(bars["close"].iloc[-1])
         return AccountState(cash=cash, equity=cash + positions_value)
 
+    def open_positions(self) -> dict[str, int]:
+        """Every symbol currently held, non-zero only.
+
+        `get_position` answers for a symbol you already know about. Anything
+        that has to value the whole book, such as the intraday monitor, needs
+        the book itself and has no other way to ask for it.
+        """
+        return {
+            row["symbol"]: int(row["qty"])
+            for row in self._conn.execute("SELECT symbol, qty FROM positions WHERE qty != 0")
+        }
+
     def get_position(self, symbol: str) -> int:
         row = self._conn.execute("SELECT qty FROM positions WHERE symbol = ?", (symbol,)).fetchone()
         return int(row["qty"]) if row else 0

@@ -51,21 +51,29 @@ src/diyquant/
   data/              # models (Bar, NewsItem), providers/ (yfinance, alpaca), store.py (parquet)
   signals/           # base protocol; technical/ (SMA crossover); sentiment/ (FinBERT + gate)
   backtest/          # engine.py (single ticker), portfolio.py + walkforward.py (validation)
-  risk/              # limits.py (kill-switch), sizing.py, selection.py (which signals get funded)
+  risk/              # limits.py (kill-switch), sizing.py, selection.py (which signals get funded),
+                     # intraday.py (mid-session mark; observes only, never trades)
   execution/         # broker interface, simulated paper broker, ledger, pipeline
   alerts/            # discord.py: webhook heartbeat, never raises
   report/            # paging.py: row caps + the dashboard's client-side pager
 scripts/             # refresh_universe, backfill, run_backtest, run_live, score_news, report,
                      # check_alerts (smoke-test the webhook), check_pulse (alert when not trading),
-                     # cancel_pending_orders (withdraw resting orders you no longer want)
+                     # cancel_pending_orders (withdraw resting orders you no longer want),
+                     # monitor_intraday (mid-session mark + warning), clear_halt (resume after one)
 deploy/              # setup.sh, publish.sh, backup.sh, iam-policy.json (EC2 provisioning)
 docs/deploy.md       # the AWS runbook: read this before touching the box
 data/                # local parquet store + ledger.sqlite (gitignored)
 ```
 
 The ledger is the system of record: `orders`, `fills`, `equity_snapshots`, `halts`,
-`sentiment_gates`, `news_scores`. It is append-only apart from order-status transitions and clearing
-a halt. `sentiment_gates` stores **every** gate evaluation, not only the vetoes: a veto
+`sentiment_gates`, `news_scores`, `intraday_marks`. It is append-only apart from order-status
+transitions and clearing a halt.
+
+`intraday_marks` is deliberately **not** `equity_snapshots`. A mid-session mark written into
+the latter would become the baseline the next cycle measures its daily drawdown against,
+which is precisely the "3% daily becomes 3% since the last mark" failure described under
+*Known constraint* below. Separate table, so the monitor can run as often as it likes and
+`last_equity_snapshot()` keeps meaning "yesterday's close". `sentiment_gates` stores **every** gate evaluation, not only the vetoes: a veto
 count with no denominator cannot answer whether the gate earns its complexity. A NULL
 score there means no whitelisted news was found, which is distinct from a neutral
 reading and must not be collapsed to 0.0.
@@ -131,6 +139,32 @@ taken is a normal input, not a fault.
   thing that differentiates this project. Decide the thesis deliberately. The fuller
   sequenced plan is in `docs/roadmap-vision.md`, which re-sequences cadence to after
   sentiment, validation, and market-neutral work.
+
+## Intraday monitoring: observes only, 2026-08-08
+
+`scripts/monitor_intraday.py` marks the book at live prices during the session, records it
+to `intraday_marks`, and warns on Discord past `risk.intraday_warn_pct`. It exists because
+the system was blind between daily cycles: on 2026-08-04 the account reached **-8.09%**
+against day-start equity at 13:48 and closed at -6.95%, and the deeper excursion left no
+trace anywhere, because a daily snapshot only ever sees the close.
+
+**It does not and must not trade yet.** Two blockers, both real and both fixable:
+
+- `SimulatedBroker.submit_market_order` stamps an order with the last daily bar's date and
+  `get_order_fill` fills only when a *later* bar appears. An order placed at noon executes
+  at tomorrow's open, the same price a 23:00 order gets, so an early stop would change the
+  timing and not the price. Intraday execution needs a genuinely new order type.
+- `run_once` returns early on an active halt **without flattening**. A monitor that merely
+  set the halt flag would therefore stop the evening cycle from flattening the book at all,
+  which is strictly worse than the current behaviour. Do not "just set the halt".
+
+Measured before building, which is why it observes rather than acts: under the volatility
+sizing shipped the same day, the 2026-08-04 book's worst intraday point was **-2.14%**,
+inside the 3% limit, so a stop would not have fired at all. The flat-cap book would have
+tripped in the first minute of the session, the gap alone being -4.85%, and stopping there
+rather than holding to the close would have saved about $2,100. Whether that case recurs
+often enough to justify the broker work is exactly what `intraday_marks` is accumulating
+the evidence for. Do not build intraday execution until that table can answer it.
 
 ## Known constraint before any cadence change
 
