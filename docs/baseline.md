@@ -190,27 +190,56 @@ deliberately keeps the alpha; going long-only trades it for market direction and
 contradicts the market-neutral thesis in `roadmap-vision.md`. The config is deliberately
 left unchanged on the strength of this table.
 
-## Is SMA crossover the best signal available? Measured 2026-08-08, answer: unproven
+## Is SMA crossover the best signal available? Measured 2026-08-08, answer: no challenger won
 
 `scripts/compare_signals.py` scores alternative signals through the same pipeline, so the
 only thing differing between rows is the rule deciding what to hold. Candidates were fixed
 before anything ran and chosen from published prior evidence, not by searching this data.
-Every row runs under the shipped volatility sizing, so the SMA row is +107.1% rather than
-the +93.3% flat-cap figure above.
+Every row runs under the shipped volatility sizing.
 
-| Signal | Return | Excess | Sharpe | Beta | Alpha | MaxDD | Gross |
-|---|---|---|---|---|---|---|---|
-| **baseline** SMA 20/50 | +107.1% | -5.0% | 0.78 | -0.17 | +19.8% | -22.6% | 0.54 |
-| SMA, risk-adjusted ranking | +72.0% | -40.1% | 0.63 | +0.28 | +8.3% | -47.2% | 0.87 |
-| momentum 12-1 | +338.2% | +226.2% | 1.38 | +0.77 | +19.6% | -20.1% | 0.80 |
-| reversal 5d | -44.0% | -156.1% | -0.59 | +0.14 | -12.5% | -51.4% | 0.81 |
+**Read the 21-year table, not the 8-year one.** Both are here because the difference between
+them is the most useful thing this exercise produced.
+
+### 2005-2026, ~18 test windows: the one to trust
+
+| Signal | Return | Excess | Sharpe | Beta | Alpha | MaxDD | Gross | Alpha/gross |
+|---|---|---|---|---|---|---|---|---|
+| **baseline** SMA 20/50 | +788.5% | -682.3% | 0.66 | +0.09 | +13.1% | -46.1% | 0.65 | **+20.2%** |
+| SMA, risk-adjusted ranking | +480.9% | -989.9% | 0.60 | +0.20 | +8.2% | -33.1% | 0.90 | +9.1% |
+| momentum 12-1 | +1447.5% | -23.3% | 0.86 | +0.41 | +10.1% | -38.7% | 0.89 | +11.3% |
+| reversal 5d | -88.8% | -1559.6% | -0.64 | +0.17 | -13.7% | -91.6% | 0.82 | -16.7% |
+
+### 2018-2026, 5 test windows: kept only as a cautionary tale
+
+| Signal | Return | Excess | Sharpe | Beta | Alpha | MaxDD | Gross | Alpha/gross |
+|---|---|---|---|---|---|---|---|---|
+| **baseline** SMA 20/50 | +107.1% | -5.0% | 0.78 | -0.17 | +19.8% | -22.6% | 0.54 | +36.7% |
+| SMA, risk-adjusted ranking | +72.0% | -40.1% | 0.63 | +0.28 | +8.3% | -47.2% | 0.87 | +9.5% |
+| momentum 12-1 | +338.2% | **+226.2%** | 1.38 | +0.77 | +19.6% | -20.1% | 0.80 | +24.5% |
+| reversal 5d | -44.0% | -156.1% | -0.59 | +0.14 | -12.5% | -51.4% | 0.81 | -15.4% |
+
+### Thirteen more years turned +226% of excess into -23%
+
+Momentum on five windows looks like the best thing ever measured in this repo, beating the
+equal-weight universe by 226 percentage points. On eighteen windows it does not beat the
+universe at all. Nothing about the strategy changed; only the number of independent periods
+it was asked to survive.
+
+Per window on the short sample it won 3 of 5, and almost the entire margin was 2024 alone
+(+109.4% against SMA's +7.4%). It also lost 2022, the only falling market there, returning
++4.2% where SMA made +20.5% against a benchmark of -10.1%. Five windows was never enough to
+tell a strategy from a good year, and this is the measurement that proves it rather than
+asserts it.
+
+**Keep this in mind before promoting anything from any table in this document.** The
+ablation rows above rest on the same five windows.
 
 **Nothing was promoted. The config still runs SMA 20/50.** Reasons, in order of how much
 they should be trusted:
 
-### Momentum's +226pp is one window
+### Momentum's short-sample edge was one window
 
-Per-window, out-of-sample, momentum against SMA:
+Per-window on the 5-window sample, out-of-sample, momentum against SMA:
 
 | Test window | Benchmark | SMA | Momentum | Difference |
 |---|---|---|---|---|
@@ -226,38 +255,61 @@ Momentum also **loses in the only falling market in the sample**, returning +4.2
 where the SMA made +20.5% against a benchmark of -10.1%. Paying for a bull market by giving
 up the bear-year property is the opposite of what this project is trying to build.
 
-### And most of the rest is beta, not picking
+### And what is left is exposure, not picking
 
-Absolute alpha is a tie (+19.6% vs +19.8%), but momentum deploys 48% more of the account to
-get it. Per unit of gross exposure that is **+24.5%/yr against the SMA's +36.7%/yr**, so the
-existing selection picks better per dollar at work. The extra return comes from carrying
-+0.77 beta into a market that rose 112% instead of the SMA's -0.17. This is the long-only
-trap from the ablation table above, wearing a different hat.
+The finding that survived both samples independently, which is why it is the one to act on.
+Momentum keeps more of its return by deploying more capital and carrying more beta, not by
+choosing better. Per unit of gross exposure:
+
+| Sample | SMA | Momentum |
+|---|---|---|
+| 2018-2026 | +36.7%/yr | +24.5%/yr |
+| 2005-2026 | +20.2%/yr | +11.3%/yr |
+
+Roughly two to one for the existing selection, in both. Momentum does win on Sharpe (0.86 vs
+0.66) and drawdown (-38.7% vs -46.1%) over 21 years, and those are real, but Sharpe rewards
+beta in a market that rose 1470%, so it is the contaminated measure here.
 
 ### The ranking metric was not the defect
 
-Worth recording because it was a confident prediction that turned out wrong. The ablation
-blamed `strength = |fast - slow| / slow` for shorting high-beta names by construction, so
-`SmaCrossover(rank_by="risk_adjusted")` divides that gap by realized volatility. It made
-everything worse: alpha halved, drawdown doubled to -47.2%, Sharpe fell. Preferring calm
-names means volatility sizing then gives them *larger* positions, so gross exposure rose to
-0.87 and carried the drawdown up with it. The ranking metric stays as it is.
+Worth recording because it was a confident prediction that turned out wrong, and wrong in
+both samples. The ablation blamed `strength = |fast - slow| / slow` for shorting high-beta
+names by construction, so `SmaCrossover(rank_by="risk_adjusted")` divides that gap by
+realized volatility. Over 21 years it cut alpha from +13.1% to +8.2% and alpha per unit of
+exposure from +20.2% to +9.1%. Preferring calm names means volatility sizing then gives them
+*larger* positions, so gross exposure rose to 0.90 and dragged returns down with it. It does
+reduce drawdown (-46.1% to -33.1%), which is the one thing in its favour and is a sizing
+effect rather than a selection one. The ranking metric stays as it is.
 
 ### Reversal is the control, and it failed as it should
 
-At -44.0% it confirms the harness is not simply rewarding whatever gets tested, which is the
-live risk when every other candidate is a trend follower.
+At -88.8% over 21 years with a -91.6% drawdown it is not merely a losing strategy, it is a
+wipeout. That is what says the harness is not simply rewarding whatever gets tested, which
+is the live risk when every other candidate is a trend follower.
 
-### What would actually settle this
+### Everything here trails buying the index, and the gap is overstated
 
-Five windows is too few to separate a real edge from a good year, and that is the binding
-constraint, not the choice of signal. `data.start` is 2018-01-01, which yields exactly five
-test windows. Extending history back would multiply them and is the cheapest real evidence
-available. Survivorship bias worsens the further back today's index membership is projected,
-so that caveat grows too, but more windows on a biased universe still beats five.
+Both trend followers lose badly to the equal-weight universe over 21 years: SMA by 682
+percentage points, momentum by 23. That is uncomfortable and it should be read with the
+survivorship caveat weighted heavily, because the caveat compounds with time. The universe
+is *today's* S&P 500 membership projected back to 2005, so every company that was in the
+index then and later failed or was removed is missing. The benchmark holds all of them
+equally and therefore banks the full survivor premium; the strategies hold five at a time
+and bank much less of it. The 21-year gap is inflated by an unknown but large amount, and
+the honest reading is that cross-signal comparisons hold while absolute excess does not.
 
-Until then momentum is a **candidate, not an improvement**, and the code is kept
-(`signals/technical/momentum.py`, tested) so re-running it costs nothing.
+Fixing that needs point-in-time index membership, which this project does not have and
+which is the single biggest known hole in every number in this document.
+
+### How to reproduce the deep history
+
+`config/settings.yaml` keeps `data.start` at 2018-01-01, which is all the live pipeline
+needs. The research store is pulled separately:
+
+```
+python scripts/backfill.py --start 2005-01-01   # ~4 min, overwrites data/bars
+python -u scripts/compare_signals.py --jobs 4   # ~11 min
+```
 
 ## What this baseline does not cover
 
