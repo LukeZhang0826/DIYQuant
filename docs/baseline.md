@@ -137,6 +137,27 @@ is worth a dedicated 0.3-against-0.4 test on its own. **The config was left at 0
 because promoting the winner of a twelve-row table is the multiple-testing move this
 document keeps warning about.
 
+#### That test was run, 2026-08-09, and the dial turns out to be leverage
+
+Head to head over the same 18 windows, under the shipped 200bp borrow:
+
+| Target | Return | Sharpe | Alpha | MaxDD | Gross | **Alpha/gross** | Windows won vs 0.4 |
+|---|---|---|---|---|---|---|---|
+| 0.3% | +551.3% | 0.69 | +10.5% | -35.0% | 0.51 | **+20.4%** | 7/18, median -2.0% |
+| **0.4% (live)** | +751.5% | 0.65 | +12.8% | -46.5% | 0.65 | **+19.8%** | |
+| 0.5% | +899.8% | 0.62 | +14.8% | -53.9% | 0.74 | **+19.9%** | 11/18, median +1.2% |
+
+The Sharpe slope does not survive per-window counting: 0.3 wins 7 of 18 against 0.4, with a
+median of -2.0%. And alpha per unit of gross exposure is **flat at ~20% across all three**.
+Return, drawdown and exposure scale together and the skill per dollar deployed does not
+move, so `target_risk_pct` is a leverage knob rather than a performance one. There is no
+setting on it that buys edge.
+
+That makes the choice purely one of risk appetite, which means the original reason stands
+unchallenged and is now better supported: **0.4 was chosen for kill-switch headroom** after
+the 2026-08-04 halt, and choosing it over the higher-returning 0.5 gives up no measured
+edge. Closed; do not re-open without a new reason.
+
 ### 2018-2026, 5 test windows: kept as a cautionary tale
 
 Benchmark is +112.1% in every row.
