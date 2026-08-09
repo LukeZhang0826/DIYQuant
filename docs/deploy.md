@@ -13,7 +13,7 @@ EC2 t4g.small (Amazon Linux 2023, arm64)
   cron 22:00 UTC Sunday   ->  scripts/refresh_universe.py -> config/universe.txt (S&P 500)
   cron 23:00 UTC Mon-Fri  ->  scripts/run_live.py   ->  Discord heartbeat
   cron 23:30 UTC Mon-Fri  ->  deploy/backup.sh      ->  S3 (append-only)
-  cron */15 14-20 UTC M-F ->  scripts/monitor_intraday.py -> Discord, only on a crossing
+  cron */15 13-21 UTC M-F ->  scripts/monitor_intraday.py -> Discord, only on a crossing
 cron 02:00 UTC Tue-Sat  ->  scripts/check_pulse.py -> Discord, only when not trading
 ```
 
@@ -193,12 +193,15 @@ HEALTHCHECK_URL=https://hc-ping.com/your-uuid-here
 # call a normal weekend stale. See Step 6.
 0 2 * * 2-6 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/check_pulse.py >> /home/ec2-user/diyquant-cron.log 2>&1
 
-# Mid-session mark of the book, every 15 minutes while New York is open. The
-# range is 14:00-20:45 UTC, which covers 09:30-16:00 ET in daylight saving and
-# most of it outside; an out-of-hours run is harmless because it just re-marks
-# the last traded price and stays quiet. This monitor never trades. See
-# scripts/monitor_intraday.py for why an intraday stop would not help yet.
-*/15 14-20 * * 1-5 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/monitor_intraday.py >> /home/ec2-user/diyquant-cron.log 2>&1
+# Mid-session mark of the book, every 15 minutes while New York is open.
+# 13:00-21:45 UTC covers the whole session in BOTH halves of the year: 09:30-16:00
+# ET is 13:30-20:00 UTC under daylight saving and 14:30-21:00 UTC outside it. Do
+# not narrow this to 14-20 "because the market opens at 14:00": that is 10:00 ET
+# and would miss the opening half hour, which is where 2026-08-04 did its damage.
+# Runs outside the session are harmless; they re-mark the last traded price and
+# stay quiet. This monitor never trades. See scripts/monitor_intraday.py for why
+# an intraday stop would not help yet.
+*/15 13-21 * * 1-5 cd /home/ec2-user/DIYQuant && ./.venv/bin/python scripts/monitor_intraday.py >> /home/ec2-user/diyquant-cron.log 2>&1
 ```
 
 Notes on the schedule:
