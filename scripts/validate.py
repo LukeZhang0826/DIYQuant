@@ -90,7 +90,8 @@ def main() -> int:
     print(f"{len(bars)} tickers, {span_start} to {span_end}")
     print(
         f"selection: {risk.max_positions} positions, hysteresis rank {risk.hysteresis_rank}; "
-        f"costs {settings.backtest.cost_bps}bps + {settings.backtest.slippage_bps}bps slippage\n"
+        f"costs {settings.backtest.cost_bps}bps + {settings.backtest.slippage_bps}bps slippage, "
+        f"borrow {settings.backtest.borrow_bps}bps/yr on shorts\n"
         + (
             f"sizing: {risk.target_risk_pct}% risk per position per day, "
             f"capped at {risk.max_position_pct}% of equity\n"
@@ -111,6 +112,7 @@ def main() -> int:
             slippage_bps=settings.backtest.slippage_bps,
             max_position_pct=risk.max_position_pct,
             target_risk_pct=risk.target_risk_pct,
+            borrow_bps=settings.backtest.borrow_bps,
         )
         print(result.summary())
     else:
@@ -124,6 +126,7 @@ def main() -> int:
             slippage_bps=settings.backtest.slippage_bps,
             max_position_pct=risk.max_position_pct,
             target_risk_pct=risk.target_risk_pct,
+            borrow_bps=settings.backtest.borrow_bps,
             train_years=args.train_years,
             test_years=args.test_years,
         )

@@ -19,6 +19,17 @@ strategy:
 backtest:
   cost_bps: 5                 # per-side transaction cost, basis points
   slippage_bps: 2
+  borrow_bps: 200             # ANNUAL stock-borrow rate, charged daily on notional held
+                              # short. Not a per-trade cost: a short that never moves is
+                              # free to trade and still accrues this for as long as it is
+                              # open. Shorting was free here until 2026-08-09.
+                              # 200 is deliberately conservative rather than typical. Large
+                              # caps generally borrow for well under 100bp, but this
+                              # strategy ranks on |trend gap| and so shorts the jumpiest
+                              # names in the index, which are the ones that get expensive.
+                              # Measured sensitivity 0/50/200/1000 in docs/baseline.md:
+                              # nothing in the conclusions turns on the choice, so the
+                              # conservative end costs nothing to assume.
 
 execution:
   broker: simulated            # simulated | alpaca_paper (Alpaca unavailable to Canadians)

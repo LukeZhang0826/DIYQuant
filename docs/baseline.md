@@ -459,6 +459,82 @@ Second negative result in two sessions, after momentum. Both were plausible, bot
 argued for from evidence, and both were killed before deployment by the same harness. That
 is the harness working.
 
+## What shorting costs, now that it is no longer free. Measured 2026-08-09
+
+Until 2026-08-09 every short in this project paid no borrow at all, which flattered every
+result with a short leg in it. `borrow_bps` is an annual rate charged daily on the notional
+held short. Unlike commission and slippage, charged once on a change in weight, borrow is
+rent: a short that never moves is free to trade and still accrues for as long as it is open.
+
+The book's average short exposure, measured over the full 21 years:
+
+| Sizing | Avg long | Avg short | Avg gross | Days holding a short |
+|---|---|---|---|---|
+| flat 20% cap | 0.603 | 0.388 | 0.991 | 67.5% |
+| vol 0.4% (live) | 0.405 | 0.223 | 0.627 | 67.5% |
+
+### The charge is arithmetically exact
+
+Fixed 20/50 over the same 21.6 years, changing nothing but the rate. This is the mechanism
+check, not a result: it is in-sample, and fixed 20/50 is known to be a poor configuration.
+
+| Rate | Return | CAGR | Measured drag | Predicted from 0.223 short |
+|---|---|---|---|---|
+| 0 | +16.9% | +0.73% | | |
+| 50bp | +14.2% | +0.62% | -0.111%/yr | -0.112%/yr |
+| 200bp | +6.2% | +0.28% | -0.444%/yr | -0.446%/yr |
+| 1000bp | -27.7% | -1.49% | -2.203%/yr | -2.230%/yr |
+
+### But the walk-forward barely notices, and that is the finding
+
+Same rates through the walk-forward, under the shipped volatility sizing:
+
+| Rate | Return | Sharpe | Beta | Alpha | MaxDD |
+|---|---|---|---|---|---|
+| 0 | +788.5% | 0.66 | +0.09 | +13.1% | -46.1% |
+| 50bp | +779.1% | 0.65 | +0.09 | +13.0% | -46.2% |
+| 200bp | +751.5% | 0.65 | +0.09 | +12.8% | -46.5% |
+| 1000bp | +728.0% | 0.64 | +0.11 | +12.3% | -46.7% |
+
+At 1000bp a year, a rate that would be punitive in reality, the walk-forward loses about 7%
+of terminal equity. The fixed-parameter run at the same rate loses 62%. The difference is
+that the walk-forward **re-chooses its parameters every year and adapts to the cost**,
+picking pairs that hold shorts less or shorter once shorts have a price.
+
+**That adaptation is not available to the live system.** `config/settings.yaml` runs a fixed
+20/50 and re-tunes never. So the walk-forward rows understate what borrow costs the deployed
+pipeline, and the fixed-parameter table above is the one that describes it. This is the same
+class of error as reading an in-sample number: the harness is quietly solving a problem the
+live system cannot.
+
+It cuts the other way too, and is worth stating plainly: a walk-forward that can dodge a new
+cost by re-optimising will make almost any cost look survivable. Any future cost added to
+this engine should be measured both ways before it is believed.
+
+### What ships
+
+`backtest.borrow_bps` is set to **200**, deliberately conservative rather than typical.
+Large caps generally borrow for well under 100bp, but this strategy ranks on absolute trend
+gap and therefore shorts the jumpiest names in the index, which are the ones that get
+expensive to borrow. The sensitivity above shows no conclusion in this document turns on the
+choice between 0 and 200, so assuming the pessimistic end costs nothing.
+
+`scripts/validate.py` reads it, so the report card now carries the assumption. **Every table
+recorded above this section assumes free borrow and was not re-run**, because correcting
+them means roughly 0.4%/yr on the fixed-parameter reading and less on the walk-forward ones,
+which changes no ranking anywhere. `scripts/ablate.py` keeps 0 in its shared base for the
+same reason: its rows exist to be compared against the historical baseline.
+
+Two omissions remain, and they do not cancel. Cash earns no interest and short proceeds earn
+none either, so a book holding half its equity in cash is charged that opportunity cost in
+full and credited nothing: pessimistic. The rate is flat across names where reality charges
+a few basis points for a mega-cap and hundreds for something hard to borrow: optimistic for
+exactly the names this ranking likes to short.
+
+**The live simulated broker still models shorting as free.** The backtest and the paper
+account now disagree about what a short costs, which is a parity gap and is the remaining
+piece of work.
+
 ## What this baseline does not cover
 
 - **The sentiment gate is not in it.** Nothing persists news, and yfinance serves
@@ -475,10 +551,12 @@ is the harness working.
 - **Close-to-close execution.** The backtest fills at the close of the bar after
   the signal; live submits market-on-open and fills at the next open. Both respect
   no-look-ahead, but they are not the same fill.
-- **No capacity or borrow modelling.** Shorts are assumed freely available at the
-  same cost as longs, which is not true for the harder-to-borrow names. As of
-  2026-08-09 this is the largest fixable measurement defect on the list: it flatters
-  every short-leg number here, and closing it is now the live half of Stage 5.
+- **No capacity modelling, and borrow is flat.** Borrow is charged as of 2026-08-09
+  (see above) but at one rate for every name, where reality charges a few basis
+  points for a mega-cap and hundreds for something hard to borrow. Availability is
+  still assumed infinite: a name that cannot be borrowed at any price is shorted
+  here regardless. The live simulated broker charges nothing at all yet, so the
+  backtest and the paper account currently disagree about what a short costs.
 
 ## Reproducing
 
