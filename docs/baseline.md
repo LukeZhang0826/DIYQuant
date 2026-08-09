@@ -72,7 +72,74 @@ difference measurement makes.
 
 Selection, hysteresis and the short leg were all built on reasoning, because until
 this harness existed there was nothing to check them against. `python scripts/ablate.py`
-runs each one out-of-sample. Benchmark is +112.1% in every row.
+runs each one out-of-sample.
+
+**Read the 21-year table. The 8-year tables below it are kept as a record of what a
+5-window sample claimed, and two of their three conclusions were wrong.**
+
+### 2005-2026, 18 test windows: the one to trust (re-run 2026-08-09)
+
+Benchmark is +1470.8% in every row. Every row except the vol-scaled ones runs under the
+**flat cap**, which this table also shows is a broken sizing regime, so read them as
+"which parts helped the old book" rather than as statements about what ships today.
+
+| Config | Return | Sharpe | Beta | Alpha | MaxDD | Gross |
+|---|---|---|---|---|---|---|
+| **baseline** 5 pos, hyst 10, flat cap | -1.6% | 0.25 | -0.48 | +20.7% | -94.7% | 1.00 |
+| 1 position | -99.1% | 0.12 | -0.32 | +15.2% | -99.9% | 1.00 |
+| 10 positions | -38.3% | 0.14 | -0.58 | +16.0% | -90.9% | 1.00 |
+| 20 positions | -72.5% | -0.03 | -0.57 | +8.8% | -92.4% | 1.00 |
+| 50 positions | -68.5% | -0.08 | -0.52 | +6.8% | -87.5% | 1.00 |
+| hysteresis off | -66.9% | 0.13 | -0.49 | +14.9% | -95.5% | 1.00 |
+| hysteresis 20 | +47.4% | 0.29 | -0.47 | +22.1% | -90.7% | 1.00 |
+| long only | +65725.6% | 1.16 | +1.07 | +24.0% | -54.0% | 1.00 |
+| vol-scaled 0.3%/day | +571.9% | 0.70 | +0.08 | +10.6% | -34.6% | 0.51 |
+| vol-scaled 0.5%/day | +953.2% | 0.63 | +0.09 | +15.1% | -53.5% | 0.74 |
+| vol-scaled 0.8%/day | +761.4% | 0.52 | +0.02 | +17.7% | -69.4% | 0.90 |
+| zero costs | +8.8% | 0.26 | -0.48 | +21.2% | -94.7% | 1.00 |
+
+**Volatility sizing is the strongest result in this project, and the only major one so far
+that got stronger when the sample grew.** The flat cap loses **-94.7%** over 21 years, a
+near-total wipeout, on the same configuration that showed +93.3% over five windows. Sizing
+by volatility turns that into +571% to +953% at roughly a third of the drawdown and triple
+the Sharpe. Momentum died on this test; this passed it.
+
+**Hysteresis reversed.** The 8-year table below priced the buffer at a ~70pp cost and
+called it a candidate for removal. Over 18 windows, removing it costs 65pp (-66.9% against
+-1.6%) and widening it to 20 gains 49pp with the best Sharpe and alpha of any flat-cap row.
+The buffer pays. Do not remove it on the strength of the old row.
+
+**Concentration survived.** Alpha still decays monotonically as slots go 5 -> 10 -> 20 -> 50
+(+20.7%, +16.0%, +8.8%, +6.8%), and one slot is still a wipeout at -99.1%. This is the one
+ablation conclusion that held in both samples, which is why it is the one to trust.
+
+**Costs are smaller than believed.** Zero costs gains ~10pp over 21 years, not the ~21pp
+the short sample implied.
+
+#### The long-only row is survivorship bias, not a finding
+
++65,725% is about 37%/yr for 21 years. That is not a plausible live result, and it is
+exactly the number this document's biggest known flaw inflates most. The universe is
+*today's* S&P 500 membership projected back to 2005, so a concentrated five-name long book
+is being handed the survivors by construction, while the short leg gets no such gift. The
+row went from +805.6% over 8 years to +65,725% over 21: the bias compounds with sample
+length, and the long side is where it lands.
+
+**This is not a reason to go long-only.** It is a reason to distrust every absolute
+long-side number in this document until point-in-time index membership exists.
+
+#### On the live `target_risk_pct` of 0.4
+
+It was chosen on 5-window evidence, which is the evidence this re-run exists to doubt. It
+is not contradicted: 0.3 and 0.5 bracket it, 0.3 wins Sharpe (0.70) and drawdown (-34.6%),
+0.5 wins raw return (+953.2%). Sharpe does slope toward less risk across the three, which
+is worth a dedicated 0.3-against-0.4 test on its own. **The config was left at 0.4**,
+because promoting the winner of a twelve-row table is the multiple-testing move this
+document keeps warning about.
+
+### 2018-2026, 5 test windows: kept as a cautionary tale
+
+Benchmark is +112.1% in every row.
 
 | Config | Return | Excess | Sharpe | Beta | Alpha | MaxDD |
 |---|---|---|---|---|---|---|
@@ -166,7 +233,7 @@ Do not read the alpha column as an absolute. It is measured against a survivorsh
 benchmark, so ~35%/yr is inflated by an unknown amount. It is a relative signal across
 rows, which is what it is used for here.
 
-### Selection earns its place; hysteresis does not
+### Selection earns its place; hysteresis does not (the second half is wrong)
 
 Concentration is monotone, in return and in alpha: 5 slots (+93.3%, alpha +35.9%) beats
 10 (+52.3%, +25.2%) beats 20 (+15.5%, +13.8%) beats 50 (-28.5%, -0.7%). Diluting the
@@ -182,6 +249,12 @@ costs at only ~21pp, so the buffer spends far more in missed rotation than it ev
 in fees. That reasoning was wrong and only measurement could have shown it. Worth
 revisiting, and worth re-validating on data these nine runs have not touched.
 
+> **Superseded 2026-08-09.** It was re-validated, on 18 windows, and the conclusion
+> inverted: hysteresis pays, and more of it pays more. The paragraph above is left in
+> place because it is a better warning than any summary of it would be. It was a
+> confident, mechanism-backed, correctly-reasoned argument from a measurement, and it
+> was wrong, because the measurement had five windows under it.
+
 ### What this argues for
 
 A selection signal with persistent alpha wrapped in an accidental, unmanaged -0.66 beta
@@ -189,6 +262,11 @@ is the case for **Stage 5 (market-neutral)** ahead of Stage 2. Neutralising the 
 deliberately keeps the alpha; going long-only trades it for market direction and
 contradicts the market-neutral thesis in `roadmap-vision.md`. The config is deliberately
 left unchanged on the strength of this table.
+
+> **Superseded 2026-08-09.** That argument was built on the -0.66 beta, which was a
+> property of the *flat cap*, not of the strategy. Under the volatility sizing shipped on
+> 2026-08-08 the book's 21-year beta is **+0.09**: there is almost nothing left to
+> neutralise. The hedge built on this reasoning was measured and lost. See below.
 
 ## Is SMA crossover the best signal available? Measured 2026-08-08, answer: no challenger won
 
@@ -311,6 +389,76 @@ python scripts/backfill.py --start 2005-01-01   # ~4 min, overwrites data/bars
 python -u scripts/compare_signals.py --jobs 4   # ~11 min
 ```
 
+## Does the Stage 5 index hedge earn its cost? Measured 2026-08-09, answer: no
+
+`risk/hedge.py` shipped disabled on 2026-08-08 and had never been run on real data.
+`scripts/measure_hedge.py` runs it out-of-sample over 2005-2026, pairing each hedged
+config with an identical unhedged one so the comparison is hedged-minus-its-own-pair.
+
+| Config | Return | Sharpe | Beta | Alpha | MaxDD | Gross |
+|---|---|---|---|---|---|---|
+| flat cap, unhedged | -1.6% | 0.25 | -0.48 | +20.7% | -94.7% | 1.00 |
+| &nbsp;&nbsp;+ hedge to beta 0.0 | -72.7% | -0.00 | -0.21 | +3.6% | -96.4% | 2.31 |
+| **vol 0.4%, unhedged (live config)** | **+788.5%** | **0.66** | **+0.09** | **+13.1%** | **-46.1%** | **0.65** |
+| &nbsp;&nbsp;+ hedge to beta 0.0 | +178.5% | 0.41 | -0.03 | +7.8% | -58.5% | 1.45 |
+| &nbsp;&nbsp;+ hedge to beta +0.3 | +432.9% | 0.60 | +0.24 | +6.8% | -59.6% | 1.31 |
+
+Per window, hedged against its own unhedged pair:
+
+| Comparison | Windows won | Median | Worst | Best |
+|---|---|---|---|---|
+| hedge to 0.0, flat cap | 7/18 | -1.6% | -78.2% | +48.2% |
+| hedge to 0.0, vol 0.4% | 6/18 | -5.8% | -38.5% | +19.8% |
+| hedge to +0.3, vol 0.4% | 8/18 | -3.8% | -32.0% | +23.5% |
+
+### The premise expired before the code was written
+
+Stage 5 was promoted ahead of Stage 2 on 2026-08-01 because the book carried an accidental
+**-0.66 beta**. Volatility sizing landed a week later and, as a side effect nobody designed,
+took that to **+0.09** over the 21-year sample. By the time the hedge existed there was no
+meaningful exposure left for it to remove. It is a correct solution to a problem that had
+already been solved by something else.
+
+So the hedge spends heavily to correct almost nothing: gross exposure **0.65 -> 1.45**, more
+than doubling the capital at work and the costs charged on it, to move beta from +0.09 to
+-0.03. Return falls by 610pp, Sharpe from 0.66 to 0.41, alpha from +13.1% to +7.8%.
+
+**It also makes drawdown worse, -46.1% to -58.5%**, which is the result that settles it. A
+hedge is bought for protection, and this one is the opposite of protective. The reason is
+that the hedge weight is driven by a rolling 120-day beta estimate that lags every regime
+change, so in a turn it is sized for the market that just ended. A book whose picks flip
+between net-long and net-short gets a hedge that swings just as hard in the opposite
+direction, and both legs can be wrong at once.
+
+The partial hedge to +0.3 loses too (8/18 windows, median -3.8%), so this is not a matter
+of picking a better target.
+
+### Where the hedge does work, it still loses
+
+The flat-cap rows are the fair test of the mechanism, because there the -0.48 beta is real.
+The hedge does move it, -0.48 to -0.21, so the arithmetic is sound. It gets only about
+halfway, partly because it neutralises against SPY while the reported beta is measured
+against the equal-weight universe, and partly because the estimate lags. And the cost of
+that partial correction is 71pp of return and a *deeper* drawdown. Even against genuine
+unwanted exposure, this instrument is not worth its price.
+
+### What stays and what changes
+
+**`hedge_symbol` stays empty in `config/settings.yaml`, and the hedge is not wired into
+`execution/pipeline.py`.** The code stays in the repo, tested and disabled: it costs
+nothing there, and the day the book carries real unwanted beta again the measurement can
+be re-run in twenty minutes rather than rebuilt.
+
+**The other half of Stage 5 is now the important half.** `SimulatedBroker` still models
+shorting as free: no borrow fee, no margin requirement, no cash check. Every short-leg
+number in this document is flattered by that, including the -0.48 beta that motivated the
+hedge and the alpha attributed to the short side. That is a measurement defect, not a
+portfolio-construction one, and it is worth more than any hedge.
+
+Second negative result in two sessions, after momentum. Both were plausible, both were
+argued for from evidence, and both were killed before deployment by the same harness. That
+is the harness working.
+
 ## What this baseline does not cover
 
 - **The sentiment gate is not in it.** Nothing persists news, and yfinance serves
@@ -328,13 +476,19 @@ python -u scripts/compare_signals.py --jobs 4   # ~11 min
   the signal; live submits market-on-open and fills at the next open. Both respect
   no-look-ahead, but they are not the same fill.
 - **No capacity or borrow modelling.** Shorts are assumed freely available at the
-  same cost as longs, which is not true for the harder-to-borrow names.
+  same cost as longs, which is not true for the harder-to-borrow names. As of
+  2026-08-09 this is the largest fixable measurement defect on the list: it flatters
+  every short-leg number here, and closing it is now the live half of Stage 5.
 
 ## Reproducing
 
 ```
-python scripts/backfill.py          # refresh the local store first
-python scripts/validate.py          # walk-forward (the number to quote)
+python scripts/backfill.py                  # refresh the local store first
+python scripts/validate.py                  # walk-forward (the number to quote)
 python scripts/validate.py --in-sample
-python scripts/ablate.py            # the component table above (~15 min, 503 tickers)
+python -u scripts/ablate.py --jobs 12       # the component table (~21 min on 21y, 503 tickers)
+python -u scripts/measure_hedge.py --jobs 5 # the Stage 5 hedge table (~18 min)
 ```
+
+The 21-year tables need the deep store: `python scripts/backfill.py --start 2005-01-01`
+first, or every run silently reports the 8-year answer instead.

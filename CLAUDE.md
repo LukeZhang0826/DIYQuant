@@ -122,17 +122,24 @@ taken is a normal input, not a fault.
   takes an absolute value, so it shorts high-beta names by construction. `news_scores` now
   archives every scored headline, since the gate cannot be backtested without a news
   history that only accumulates from the day capture starts.
-- **Stage 5 (market-neutral): next, not started.** Promoted ahead of Stage 2 on evidence
-  2026-08-01. The book carries persistent alpha inside an accidental **-0.66 beta** nobody
-  chose, so it is net short a market that rose 112% while its stock-picking works. That is
-  a portfolio-construction defect, not a signal defect, and it is measurable today with the
-  harness that now exists. Work: the simulated broker and risk module handling shorts
-  properly, plus explicit beta targeting so exposure is a decision rather than a by-product
-  of which names the ranking picked. Do **not** respond to the ablation by switching to
-  long-only: that trades the alpha for market direction and abandons the market-neutral
-  thesis. **Stage 2 (sentiment as a signal) is blocked**, not skipped: the gate cannot be
-  evaluated until `news_scores` holds months of history, so building it now would add an
-  unverifiable component to a strategy just proven unmeasured.
+- **Stage 5 (market-neutral): half done, half cancelled 2026-08-09.** It was promoted ahead
+  of Stage 2 on 2026-08-01 because the book carried persistent alpha inside an accidental
+  **-0.66 beta** nobody chose. **That premise expired.** The volatility sizing shipped
+  2026-08-08 already took the 21-year beta to **+0.09** as a side effect, so the beta-targeting
+  half had almost nothing left to correct. Measured out-of-sample on 2026-08-09
+  (`scripts/measure_hedge.py`), the SPY hedge cost 610pp of return, cut Sharpe 0.66 -> 0.41,
+  doubled gross exposure 0.65 -> 1.45, **and made drawdown worse, -46.1% -> -58.5%**, winning
+  only 6 of 18 windows. `risk/hedge.py` stays in the repo, tested and **disabled**
+  (`hedge_symbol` empty, never wired into `execution/pipeline.py`), so it can be re-measured
+  cheaply if the book ever carries real unwanted beta again. Do **not** re-propose it without
+  first showing the beta is back. Do **not** respond to the long-only ablation row by
+  switching to long-only: at 21 years that row is +65,725%, which is survivorship bias
+  compounding on the long side, not stock-picking. **What remains of Stage 5 is the broker:**
+  `SimulatedBroker` models shorting as free, with no borrow fee, no margin requirement and no
+  cash check, which flatters every short-leg number in `docs/baseline.md`. That is the next
+  piece of work. **Stage 2 (sentiment as a signal) is still blocked**, not skipped: the gate
+  cannot be evaluated until `news_scores` holds months of history, so building it now would
+  add an unverifiable component to a strategy just proven unmeasured.
 - **Phase 4 / Stage 8: not started.** Intraday cadence. Three things must be settled
   first: a signal that defines "notable" (SMA crossover has no concept of magnitude),
   a data source that supports intraday backtesting (yfinance serves 1-minute bars for
