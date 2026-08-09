@@ -1,5 +1,11 @@
 # Verifying the first unattended run
 
+> **Passed 2026-07-22, and kept as the template it offers to be.** The gap this
+> checklist describes is closed: cron has fired unattended every trading day
+> since. Read the present tense below as the state on 2026-07-21, not as now.
+> Reuse the shape of it for the next cadence change, which is the one thing it
+> is still good for.
+
 Everything through 2026-07-21 was triggered by hand over SSH. Cron has never
 fired on its own, so the pipeline is **configured** to be automated rather than
 **proven** automated. This checklist closes that gap. Work through it once, then
