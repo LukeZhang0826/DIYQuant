@@ -36,11 +36,13 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from diyquant.risk.hedge import plan_hedge
 from diyquant.risk.selection import select_positions
 from diyquant.risk.sizing import DEFAULT_VOL_LOOKBACK, realized_vol_pct, volatility_budget_pct
 from diyquant.signals.base import conviction_series
 
 TRADING_DAYS = 252
+DEFAULT_BETA_LOOKBACK = 120
 
 
 @dataclass
@@ -221,6 +223,9 @@ def run_portfolio_backtest(
     max_position_pct: float = 20.0,
     target_risk_pct: float = 0.0,
     vol_lookback: int = DEFAULT_VOL_LOOKBACK,
+    hedge_symbol: str = "",
+    target_beta: float = 0.0,
+    beta_lookback: int = DEFAULT_BETA_LOOKBACK,
 ) -> PortfolioResult:
     """Replay the selection pipeline over history and score what it would have done.
 
@@ -231,14 +236,44 @@ def run_portfolio_backtest(
     book of jumpy names is deliberately less invested than a book of calm ones,
     and the difference sits in cash earning nothing. That drag is the cost being
     measured, and it has to be paid out of the same equity curve as the benefit.
+
+    `hedge_symbol` turns on Stage 5 beta targeting. The named instrument is
+    excluded from candidacy and from the benchmark, since it is neither a pick
+    nor a member of the universe being beaten, and instead carries whatever
+    weight brings the book's beta to `target_beta`. Its cost, its turnover and
+    its contribution to gross exposure are all charged normally: a hedge that
+    looked free would be the same self-deception as a short leg that never paid
+    borrow.
     """
     if not bars_by_symbol:
         raise ValueError("no bars given")
+    if hedge_symbol and hedge_symbol not in bars_by_symbol:
+        raise ValueError(f"hedge symbol {hedge_symbol!r} has no bars; backfill it first")
 
     symbols, dates, sig, stg, vol, ret, valid = _aligned(bars_by_symbol, strategy, vol_lookback)
     idx_of = {s: j for j, s in enumerate(symbols)}
     n_dates, n_symbols = sig.shape
     weights = np.zeros((n_dates, n_symbols))
+
+    hedge_idx = idx_of[hedge_symbol] if hedge_symbol else None
+    betas = np.empty((0, 0))
+    if hedge_idx is not None:
+        # Never a candidate: a zero signal keeps it out of `candidates` without
+        # special-casing selection, and dropping it from `valid` keeps it out of
+        # the equal-weight benchmark, which measures the universe rather than the
+        # tools used to trade it. Copied because _aligned hands back pandas-backed
+        # views, which are read-only.
+        sig, valid = sig.copy(), valid.copy()
+        sig[:, hedge_idx] = 0
+        valid[:, hedge_idx] = False
+        returns_frame = pd.DataFrame(ret, index=dates, columns=symbols)
+        market = returns_frame[hedge_symbol]
+        betas = (
+            returns_frame.rolling(beta_lookback)
+            .cov(market)
+            .div(market.rolling(beta_lookback).var().replace(0.0, np.nan), axis=0)
+            .to_numpy(dtype=float)
+        )
 
     # Sequential because hysteresis makes today's book depend on yesterday's:
     # an incumbent keeps its slot on a rank it would not win from outside.
@@ -267,6 +302,16 @@ def run_portfolio_backtest(
         # incumbency from the broker's position, which would be 0 too.
         direction = {s: int(row_sig[idx_of[s]]) for s in funded if weights[i, idx_of[s]] != 0}
 
+        if hedge_idx is not None:
+            # Sized from the picks as they now stand, so the risk budgets above
+            # are never overridden to hit a portfolio-level target.
+            held_now = {s: weights[i, idx_of[s]] for s in direction}
+            weights[i, hedge_idx] = plan_hedge(
+                held_now,
+                {s: betas[i, idx_of[s]] for s in direction},
+                target_beta,
+            ).weight
+
     # Position held DURING date i is the one selected at i-1: no look-ahead.
     held_w = np.vstack([np.zeros((1, n_symbols)), weights[:-1]])
     gross = (held_w * ret).sum(axis=1)
@@ -274,7 +319,14 @@ def run_portfolio_backtest(
     costs = turnover * (cost_bps + slippage_bps) / 10_000
     port_ret = gross - costs
 
-    closed = _position_returns(held_w, ret)
+    # The hedge is excluded from the hit rate: it is a risk instrument, not a
+    # view on a company, and counting it as a won or lost position would measure
+    # market direction under the heading of stock-picking skill.
+    picks_w = held_w
+    if hedge_idx is not None:
+        picks_w = held_w.copy()
+        picks_w[:, hedge_idx] = 0.0
+    closed = _position_returns(picks_w, ret)
 
     gross_exp = pd.Series(np.abs(held_w).sum(axis=1), index=dates)
     returns_s = pd.Series(port_ret, index=dates)

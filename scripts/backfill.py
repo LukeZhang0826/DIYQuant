@@ -76,7 +76,14 @@ def main() -> None:
     start = args.start or settings.data.start
     full = args.full or bool(args.start)
     provider = YFinanceProvider()
-    tickers = settings.universe["tickers"]
+    tickers = list(settings.universe["tickers"])
+    # The hedge instrument is not an index constituent, so it is absent from
+    # config/universe.txt and every loop that iterates the universe skips it.
+    # SPY sat five months stale in the store for exactly that reason before this
+    # line existed. A hedge priced off old bars is worse than no hedge.
+    hedge = settings.risk.hedge_symbol
+    if hedge and hedge not in tickers:
+        tickers.append(hedge)
     print(f"{len(tickers)} tickers from {start} ({'full' if full else 'incremental'})", flush=True)
     failed: list[tuple[str, str]] = []
     for i, ticker in enumerate(tickers, 1):

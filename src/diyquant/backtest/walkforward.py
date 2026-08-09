@@ -122,6 +122,8 @@ def walk_forward(
     slippage_bps: float = 2.0,
     max_position_pct: float = 20.0,
     target_risk_pct: float = 0.0,
+    hedge_symbol: str = "",
+    target_beta: float = 0.0,
     train_years: float = 3.0,
     test_years: float = 1.0,
     objective=lambda r: r.sharpe,
@@ -133,6 +135,13 @@ def walk_forward(
     defaults to Sharpe rather than raw return, since return alone will happily
     pick the pair that made one enormous leveraged-looking bet and survived.
     """
+    # Checked here rather than left to the per-combo call below, which swallows
+    # ValueError to skip invalid parameter pairs. A missing hedge would be eaten
+    # by that same handler, fail every combo, leave `best` None, and silently
+    # skip every window: an empty result reported as a completed run.
+    if hedge_symbol and hedge_symbol not in bars_by_symbol:
+        raise ValueError(f"hedge symbol {hedge_symbol!r} has no bars; backfill it first")
+
     all_dates = pd.DatetimeIndex(sorted({d for b in bars_by_symbol.values() for d in b.index}))
     spans = make_windows(all_dates, train_years, test_years)
     if not spans:
@@ -166,6 +175,8 @@ def walk_forward(
                     slippage_bps=slippage_bps,
                     max_position_pct=max_position_pct,
                     target_risk_pct=target_risk_pct,
+                    hedge_symbol=hedge_symbol,
+                    target_beta=target_beta,
                 )
             except ValueError:
                 continue  # an invalid combination, e.g. fast >= slow
@@ -187,6 +198,8 @@ def walk_forward(
             slippage_bps=slippage_bps,
             max_position_pct=max_position_pct,
             target_risk_pct=target_risk_pct,
+            hedge_symbol=hedge_symbol,
+            target_beta=target_beta,
         )
         # Score only the test span. The warmup history kept by _slice would
         # otherwise be counted again in every later window.

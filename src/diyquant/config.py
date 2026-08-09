@@ -50,6 +50,11 @@ class RiskConfig(BaseModel):
     target_risk_pct: float = 0.0  # 0 disables volatility scaling: flat cap for everyone
     vol_lookback_days: int = 20
     intraday_warn_pct: float = 2.0  # mid-session drawdown that earns a Discord message
+    # Stage 5. Empty hedge_symbol disables hedging entirely; target_beta cannot
+    # double as the off switch, because 0.0 is precisely the market-neutral goal.
+    hedge_symbol: str = ""
+    target_beta: float = 0.0
+    beta_lookback_days: int = 120
 
 
 class ExecutionConfig(BaseModel):

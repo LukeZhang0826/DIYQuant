@@ -220,3 +220,97 @@ def test_half_exposure_reads_as_half_beta():
     alpha, beta = alpha_beta(market * 0.5, market)
     assert beta == pytest.approx(0.5)
     assert alpha == pytest.approx(0.0, abs=1e-12)
+
+
+def _beta_world(n=400, seed=20260808):
+    """A market plus three names with known betas, for Stage 5 hedging tests."""
+    rng = np.random.default_rng(seed)
+    market = rng.normal(0.0005, 0.011, n)
+    rets = {"SPY": list(market)}
+    for sym, beta in (("HIGH", 1.8), ("MID", 1.2), ("LOW", 0.6)):
+        rets[sym] = list(beta * market + rng.normal(0, 0.004, n))
+    return rets
+
+
+def test_hedging_drives_book_beta_to_the_target():
+    """Stage 5's whole claim: exposure becomes a decision instead of a leftover."""
+    rets = _beta_world()
+    scores = {"HIGH": 3.0, "MID": 2.0, "LOW": 1.0, "SPY": 0.0}
+    bars, strategy = build(rets, scores)
+
+    unhedged = run_portfolio_backtest(bars, strategy, max_positions=3, hysteresis_rank=3)
+    hedged = run_portfolio_backtest(
+        bars,
+        strategy,
+        max_positions=3,
+        hysteresis_rank=3,
+        hedge_symbol="SPY",
+        target_beta=0.0,
+        beta_lookback=60,
+    )
+
+    assert unhedged.beta > 0.8  # three longs on high-beta names
+    assert abs(hedged.beta) < 0.15
+    assert abs(hedged.beta) < abs(unhedged.beta)
+
+
+def test_a_non_zero_beta_target_is_hit_too():
+    rets = _beta_world()
+    scores = {"HIGH": 3.0, "MID": 2.0, "LOW": 1.0, "SPY": 0.0}
+    bars, strategy = build(rets, scores)
+    hedged = run_portfolio_backtest(
+        bars,
+        strategy,
+        max_positions=3,
+        hysteresis_rank=3,
+        hedge_symbol="SPY",
+        target_beta=0.5,
+        beta_lookback=60,
+    )
+    assert hedged.beta == pytest.approx(0.5, abs=0.2)
+
+
+def test_the_hedge_is_never_a_pick():
+    """It must not take a funded slot, nor count toward the universe it is beating."""
+    rets = _beta_world()
+    scores = {"HIGH": 3.0, "MID": 2.0, "LOW": 1.0, "SPY": 99.0}  # would rank first if eligible
+    bars, strategy = build(rets, scores)
+    hedged = run_portfolio_backtest(
+        bars,
+        strategy,
+        max_positions=2,
+        hysteresis_rank=2,
+        hedge_symbol="SPY",
+        target_beta=0.0,
+        beta_lookback=60,
+    )
+    # Two picks funded plus the hedge, never three picks.
+    picks = hedged.weights.drop(columns=["SPY"])
+    assert (picks != 0).sum(axis=1).max() == 2
+
+
+def test_hedging_costs_gross_exposure():
+    """A hedge consumes capital. If it looked free the comparison would be rigged."""
+    rets = _beta_world()
+    scores = {"HIGH": 3.0, "MID": 2.0, "LOW": 1.0, "SPY": 0.0}
+    bars, strategy = build(rets, scores)
+    unhedged = run_portfolio_backtest(bars, strategy, max_positions=3, hysteresis_rank=3)
+    hedged = run_portfolio_backtest(
+        bars,
+        strategy,
+        max_positions=3,
+        hysteresis_rank=3,
+        hedge_symbol="SPY",
+        target_beta=0.0,
+        beta_lookback=60,
+    )
+    assert hedged.avg_gross_exposure > unhedged.avg_gross_exposure
+
+
+def test_missing_hedge_bars_fail_loudly():
+    rets = _beta_world()
+    scores = {"HIGH": 3.0, "MID": 2.0, "LOW": 1.0, "SPY": 0.0}
+    bars, strategy = build(rets, scores)
+    del bars["SPY"]
+    with pytest.raises(ValueError, match="backfill"):
+        run_portfolio_backtest(bars, strategy, hedge_symbol="SPY")
