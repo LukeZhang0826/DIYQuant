@@ -347,6 +347,67 @@ free -h        # after a cycle: how much swap actually got used
 If swap usage stays near zero, the box is comfortable and t4g.micro becomes a
 credible option come December 2026.
 
+## Updating the code on the box
+
+Everything above builds the box once. This is the operation you actually repeat,
+and it is the one with a live account underneath it.
+
+```bash
+ssh -i ~/.ssh/diyquant.pem ec2-user@YOUR_BOX_IP
+cd ~/DIYQuant
+git rev-parse --short HEAD          # write this down: it is the rollback point
+git status --short                  # must be empty (see below)
+git pull --ff-only origin main
+./.venv/bin/python -m pytest -q     # must pass HERE, not only on your laptop
+```
+
+`--ff-only` on purpose. A plain `git pull` on a box with an accidental local
+commit opens a merge, and resolving one over SSH on a machine that trades at
+23:00 UTC is not where you want to be. If it refuses, find out why before
+forcing anything.
+
+**`git status` must be empty before pulling.** The generated files the box
+depends on are gitignored (`config/universe.txt`, `.env`, `data/`), so a dirty
+tree means something was edited in place and the pull is about to overwrite or
+conflict with it. That edit is the thing to understand first.
+
+Install dependencies only when they changed. `HEAD@{1}` is where the pull just
+moved you from, so this prints the file only if the pull touched it:
+
+```bash
+git diff --name-only HEAD@{1} HEAD -- pyproject.toml   # silent = nothing to do
+./.venv/bin/pip install -e ".[dev]"                    # only if that printed something
+```
+
+Remember `/tmp` is a small RAM-backed tmpfs here, so a pip install that fails
+with `ENOSPC` on a box with plenty of disk is the known cause, not a full disk:
+`TMPDIR=~/tmp ./.venv/bin/pip install -e ".[dev]"`.
+
+### Then verify against the box, not against the test suite
+
+A green suite proves the logic, which was never the thing that broke. Every one
+of the seven bugs found deploying this project was an assumption about the
+environment, so exercise whatever you actually changed, on the real machine,
+against the real files:
+
+```bash
+./.venv/bin/python -c "
+from diyquant.config import get_settings
+s = get_settings()
+print('risk :', s.risk.target_risk_pct, s.risk.max_positions, repr(s.risk.hedge_symbol))
+print('costs:', s.backtest.cost_bps, s.backtest.slippage_bps, s.backtest.borrow_bps)
+"
+```
+
+**Do not run `scripts/run_live.py` by hand to test a deploy.** It submits real
+paper orders that fill at the next open, so it consumes the cycle cron is about
+to run and changes the book you were trying to observe. Let the schedule do it
+and read the Discord heartbeat.
+
+Rolling back is `git checkout <the short hash you wrote down>`. Nothing in a
+deploy touches `data/`, so the ledger, the broker's books and the bar store all
+survive a rollback untouched.
+
 ## Restoring from a backup
 
 Worth doing once now, while nothing is at stake, so you are not learning it
@@ -373,6 +434,7 @@ An untested backup is a guess. This turns it into a fact.
 | `check_alerts.py` returns 403 | Missing or rejected User-Agent, or a webhook that was deleted in Discord. |
 | Cycle killed with no traceback | Out of memory. Check `free -h` and `sudo dmesg | grep -i oom`. |
 | `drawdown check skipped` in the report | Expected after an outage longer than 120h. It is the safety behaviour, not a bug. |
+| `ORDER DRIFT` in the report | The ledger and the broker disagree about which orders are still live. Not urgent (nothing fills them this cycle) but not self-healing: inspect, then clear with `scripts/cancel_pending_orders.py`. The check reports and never repairs, deliberately. |
 | Backup fails with `AccessDenied` | The IAM policy still says `BUCKET_NAME`, or the key belongs to a different user. |
 | Log file growing without bound | Add logrotate, or truncate it periodically. Low priority at one run per day. |
 | healthchecks.io alerts every Saturday | The check's schedule is daily; set it to `0 23 * * 1-5` to match cron. |
