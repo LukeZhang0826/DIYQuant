@@ -8,10 +8,21 @@ complete refetch (e.g. after extending data.start further back).
 One bad ticker (delisted, renamed, rate-limited) must not abort the whole run: at
 S&P 500 scale some failures are expected, so failures are collected and reported.
 
-Usage: python scripts/backfill.py [--full]
+`--start` overrides `data.start` for one run, which is how research history gets
+pulled without touching what the live box does. Deep history is a validation
+asset, not a trading requirement: the slowest signal here needs 200 bars, while
+separating a real edge from one lucky year needs decades. Changing `data.start`
+in config instead would mean a fresh checkout, or anyone running `--full` on the
+box, downloading twenty years for 503 tickers to run a cycle that reads the last
+few hundred rows.
+
+Usage:
+  python scripts/backfill.py                              # daily incremental
+  python scripts/backfill.py --full                       # refetch from data.start
+  python scripts/backfill.py --full --start 2005-01-01    # deep history for validation
 """
 
-import sys
+import argparse
 
 import pandas as pd
 
@@ -52,14 +63,25 @@ def _refresh_ticker(
 
 
 def main() -> None:
-    full = "--full" in sys.argv
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--full", action="store_true", help="refetch every ticker from scratch")
+    parser.add_argument(
+        "--start",
+        help="override data.start for this run (YYYY-MM-DD). Implies --full: fetching "
+        "earlier history is pointless while the incremental path only asks for newer bars.",
+    )
+    args = parser.parse_args()
+
     settings = get_settings()
+    start = args.start or settings.data.start
+    full = args.full or bool(args.start)
     provider = YFinanceProvider()
     tickers = settings.universe["tickers"]
+    print(f"{len(tickers)} tickers from {start} ({'full' if full else 'incremental'})", flush=True)
     failed: list[tuple[str, str]] = []
     for i, ticker in enumerate(tickers, 1):
         try:
-            df, n_new = _refresh_ticker(provider, ticker, settings.data.start, full)
+            df, n_new = _refresh_ticker(provider, ticker, start, full)
             if n_new == 0:
                 print(f"[{i}/{len(tickers)}] {ticker}: up to date ({len(df)} bars)")
             else:

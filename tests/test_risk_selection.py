@@ -108,3 +108,53 @@ def test_no_candidates_funds_nothing():
 def test_zero_max_positions_funds_nothing():
     picked = select_positions(scores(A=0.9), held={"A"}, max_positions=0, hysteresis_rank=10)
     assert picked == set()
+
+
+def _reference(scores, held, max_positions, hysteresis_rank):
+    """The pre-2026-08-08 implementation: full sort, kept as the oracle.
+
+    select_positions was changed to a top-k heap for speed, and "for speed" is
+    exactly when a behaviour change slips through unnoticed. This is the old code
+    verbatim, so the property test below compares against what actually shipped
+    rather than against a restatement of the new logic.
+    """
+    if max_positions <= 0:
+        return set()
+    ranked = sorted(scores, key=lambda symbol: (-scores[symbol], symbol))
+    rank_of = {symbol: i + 1 for i, symbol in enumerate(ranked)}
+    keep = {s for s in held if s in rank_of and rank_of[s] <= hysteresis_rank}
+    if len(keep) > max_positions:
+        keep = set(sorted(keep, key=lambda s: rank_of[s])[:max_positions])
+    free = max_positions - len(keep)
+    if free <= 0:
+        return keep
+    entrants = [s for s in ranked[:max_positions] if s not in keep][:free]
+    return keep | set(entrants)
+
+
+def test_top_k_matches_the_full_sort_on_random_books():
+    """Randomised equivalence, including ties, which is where a sort's order matters."""
+    import random
+
+    rng = random.Random(20260808)
+    universe = [f"S{i:03d}" for i in range(120)]
+    for _ in range(400):
+        n = rng.randint(1, len(universe))
+        symbols = rng.sample(universe, n)
+        # Coarse scores on purpose: rounding forces frequent ties, so the
+        # symbol-name tiebreak is genuinely exercised rather than assumed.
+        scores = {s: round(rng.uniform(-2, 2), 1) for s in symbols}
+        held = set(rng.sample(symbols, rng.randint(0, min(8, n))))
+        max_positions = rng.randint(1, 8)
+        hysteresis_rank = rng.randint(1, 20)
+
+        assert select_positions(scores, held, max_positions, hysteresis_rank) == _reference(
+            scores, held, max_positions, hysteresis_rank
+        ), (scores, held, max_positions, hysteresis_rank)
+
+
+def test_top_k_matches_when_hysteresis_is_deeper_than_the_universe():
+    scores = {"A": 1.0, "B": 0.5}
+    assert select_positions(scores, {"B"}, max_positions=1, hysteresis_rank=50) == _reference(
+        scores, {"B"}, 1, 50
+    )

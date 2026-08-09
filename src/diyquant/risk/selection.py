@@ -17,6 +17,8 @@ decides who gets a slot, so changing how conviction is measured never touches
 this file.
 """
 
+import heapq
+
 
 def select_positions(
     scores: dict[str, float],
@@ -42,7 +44,15 @@ def select_positions(
     if max_positions <= 0:
         return set()
 
-    ranked = sorted(scores, key=lambda symbol: (-scores[symbol], symbol))
+    # Only the top max(max_positions, hysteresis_rank) ever matters: an incumbent
+    # outside hysteresis_rank loses its slot whatever its exact rank, and an
+    # entrant outside max_positions can never take one. Fully sorting ~500
+    # candidates to read the first 10 of them was the single hottest line in a
+    # walk-forward, which runs this once per symbol-day across hundreds of
+    # backtests. nsmallest is O(n log k) and returns them in the same order the
+    # sort did, so the selected set is unchanged.
+    depth = max(max_positions, hysteresis_rank)
+    ranked = heapq.nsmallest(depth, scores, key=lambda symbol: (-scores[symbol], symbol))
     rank_of = {symbol: i + 1 for i, symbol in enumerate(ranked)}
 
     # A held name absent from `scores` has gone flat or been vetoed this cycle,

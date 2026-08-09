@@ -1,5 +1,6 @@
 """SMA crossover baseline: long when fast SMA > slow SMA, short when below, flat during warmup."""
 
+import numpy as np
 import pandas as pd
 
 
@@ -27,12 +28,12 @@ class SmaCrossover:
         fast_sma = close.rolling(self.fast).mean()
         slow_sma = close.rolling(self.slow).mean()
 
-        signal = pd.Series(0, index=bars.index, dtype=int)
-        signal[fast_sma > slow_sma] = 1
-        signal[fast_sma < slow_sma] = -1
-        # Warmup period: no position until slow SMA exists
-        signal[slow_sma.isna()] = 0
-        return signal
+        # np.sign in one pass rather than three boolean-mask assignments: same
+        # result, and this runs 500 symbols per backtest across hundreds of
+        # backtests in a walk-forward, where masked __setitem__ dominated the
+        # profile. Warmup falls out for free, since the averages are NaN there,
+        # NaN propagates through the subtraction, and fillna(0) means flat.
+        return np.sign(fast_sma - slow_sma).fillna(0.0).astype(int)
 
     def strength_series(self, bars: pd.DataFrame) -> pd.Series:
         """Conviction at every bar: how far apart the two averages are.
