@@ -154,7 +154,9 @@ def main() -> int:
         slippage_bps=settings.backtest.slippage_bps,
         max_position_pct=risk.max_position_pct,
         target_risk_pct=0.0,  # baseline is the flat cap, whatever config now ships
+        borrow_bps=0.0,  # free shorting, as every row recorded before 2026-08-09 assumed
     )
+    live_risk = risk.target_risk_pct
 
     # (label, question it answers, strategy factory, overrides)
     runs = [
@@ -179,6 +181,35 @@ def main() -> int:
             "how much do costs eat?",
             SmaCrossover,
             {"cost_bps": 0, "slippage_bps": 0},
+        ),
+        # Borrow is measured under the shipped volatility sizing, not under the
+        # flat cap the rows above use, because the size of the short leg is what
+        # the charge lands on and sizing is what sets it. These four are a
+        # sensitivity range, not a search: the rate is an assumption about the
+        # world, so the question is how much of the conclusion depends on it.
+        (
+            f"  vol {live_risk}%, borrow 0",
+            "what does free shorting hide?",
+            SmaCrossover,
+            {"target_risk_pct": live_risk},
+        ),
+        (
+            f"  vol {live_risk}%, borrow 50bp",
+            "",
+            SmaCrossover,
+            {"target_risk_pct": live_risk, "borrow_bps": 50},
+        ),
+        (
+            f"  vol {live_risk}%, borrow 200bp",
+            "",
+            SmaCrossover,
+            {"target_risk_pct": live_risk, "borrow_bps": 200},
+        ),
+        (
+            f"  vol {live_risk}%, borrow 1000bp",
+            "",
+            SmaCrossover,
+            {"target_risk_pct": live_risk, "borrow_bps": 1000},
         ),
     ]
 

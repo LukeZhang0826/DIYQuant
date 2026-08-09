@@ -226,6 +226,7 @@ def run_portfolio_backtest(
     hedge_symbol: str = "",
     target_beta: float = 0.0,
     beta_lookback: int = DEFAULT_BETA_LOOKBACK,
+    borrow_bps: float = 0.0,
 ) -> PortfolioResult:
     """Replay the selection pipeline over history and score what it would have done.
 
@@ -244,6 +245,23 @@ def run_portfolio_backtest(
     its contribution to gross exposure are all charged normally: a hedge that
     looked free would be the same self-deception as a short leg that never paid
     borrow.
+
+    `borrow_bps` is that borrow, as an **annual** rate charged daily on the
+    notional held short. Until 2026-08-09 it did not exist and every short in
+    this project was free, which flattered every result with a short leg in it,
+    including the negative beta that the Stage 5 hedge was built to correct.
+    It defaults to 0 so that older numbers stay reproducible; the shipped value
+    lives in `backtest.borrow_bps`.
+
+    Two deliberate omissions, both erring the same way. Cash earns no interest
+    here and short proceeds earn none either, so a book holding half its equity
+    in cash is charged the opportunity cost in full and credited nothing. And
+    the rate is flat across names, where reality charges a few basis points for
+    a mega-cap and hundreds for something hard to borrow. The first makes the
+    result pessimistic, the second makes it optimistic for exactly the jumpy
+    small names this strategy's ranking metric likes to short. Neither is
+    modelled honestly enough to net off, which is why the shipped rate is chosen
+    from a measured sensitivity range rather than from a single guess.
     """
     if not bars_by_symbol:
         raise ValueError("no bars given")
@@ -317,7 +335,13 @@ def run_portfolio_backtest(
     gross = (held_w * ret).sum(axis=1)
     turnover = np.abs(np.diff(held_w, axis=0, prepend=np.zeros((1, n_symbols)))).sum(axis=1)
     costs = turnover * (cost_bps + slippage_bps) / 10_000
-    port_ret = gross - costs
+    # Charged on the notional held short, every day it is held, unlike commission
+    # and slippage which are charged once on the change. A short that never moves
+    # costs nothing to trade and still accrues borrow for as long as it is open,
+    # which is precisely the cost this book was not paying.
+    short_notional = -np.minimum(held_w, 0.0).sum(axis=1)
+    borrow = short_notional * (borrow_bps / 10_000) / TRADING_DAYS
+    port_ret = gross - costs - borrow
 
     # The hedge is excluded from the hit rate: it is a risk instrument, not a
     # view on a company, and counting it as a won or lost position would measure

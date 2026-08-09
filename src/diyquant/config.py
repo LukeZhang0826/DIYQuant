@@ -39,6 +39,12 @@ class DataConfig(BaseModel):
 class BacktestConfig(BaseModel):
     cost_bps: float
     slippage_bps: float
+    # Annual stock-borrow rate charged daily on notional held short. Defaults to
+    # 0, which is what every result recorded before 2026-08-09 assumed, so those
+    # numbers stay reproducible. Unlike cost_bps this is not a fee the project
+    # chooses: it is an assumption about the world, so it is measured as a
+    # sensitivity range rather than tuned.
+    borrow_bps: float = 0.0
 
 
 class RiskConfig(BaseModel):

@@ -124,6 +124,7 @@ def walk_forward(
     target_risk_pct: float = 0.0,
     hedge_symbol: str = "",
     target_beta: float = 0.0,
+    borrow_bps: float = 0.0,
     train_years: float = 3.0,
     test_years: float = 1.0,
     objective=lambda r: r.sharpe,
@@ -177,6 +178,7 @@ def walk_forward(
                     target_risk_pct=target_risk_pct,
                     hedge_symbol=hedge_symbol,
                     target_beta=target_beta,
+                    borrow_bps=borrow_bps,
                 )
             except ValueError:
                 continue  # an invalid combination, e.g. fast >= slow
@@ -200,6 +202,7 @@ def walk_forward(
             target_risk_pct=target_risk_pct,
             hedge_symbol=hedge_symbol,
             target_beta=target_beta,
+            borrow_bps=borrow_bps,
         )
         # Score only the test span. The warmup history kept by _slice would
         # otherwise be counted again in every later window.

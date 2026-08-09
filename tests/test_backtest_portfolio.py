@@ -314,3 +314,51 @@ def test_missing_hedge_bars_fail_loudly():
     del bars["SPY"]
     with pytest.raises(ValueError, match="backfill"):
         run_portfolio_backtest(bars, strategy, hedge_symbol="SPY")
+
+
+# 2520bp a year over 252 trading days is exactly 10bp a day, which makes the
+# arithmetic checkable by eye rather than by reimplementing it in the assertion.
+_FREE = dict(max_positions=1, hysteresis_rank=1, cost_bps=0, slippage_bps=0)
+
+
+def test_borrow_is_charged_on_shorts_and_not_on_longs():
+    short_bars, short_strategy = build({"A": [0.0] * 4}, {"A": 1.0}, signal=-1)
+    long_bars, long_strategy = build({"A": [0.0] * 4}, {"A": 1.0}, signal=1)
+
+    shorted = run_portfolio_backtest(short_bars, short_strategy, borrow_bps=2520, **_FREE)
+    owned = run_portfolio_backtest(long_bars, long_strategy, borrow_bps=2520, **_FREE)
+
+    # Prices are flat, so every basis point of the difference is borrow. Four
+    # days are held: the signal on the last bar is never paid for.
+    assert shorted.equity_curve.iloc[-1] == pytest.approx(0.999**4)
+    assert owned.equity_curve.iloc[-1] == pytest.approx(1.0)
+
+
+def test_borrow_accrues_with_time_where_commission_does_not():
+    """The property that makes borrow a different kind of cost from the others.
+
+    Commission and slippage are charged once, on the change in weight, so a
+    position that never moves is free to keep. Borrow is rent: holding the same
+    short twice as long costs twice as much, and nothing else in this engine
+    behaves that way.
+    """
+    brief_bars, brief_strategy = build({"A": [0.0] * 4}, {"A": 1.0}, signal=-1)
+    long_bars, long_strategy = build({"A": [0.0] * 8}, {"A": 1.0}, signal=-1)
+
+    brief = run_portfolio_backtest(brief_bars, brief_strategy, borrow_bps=2520, **_FREE)
+    extended = run_portfolio_backtest(long_bars, long_strategy, borrow_bps=2520, **_FREE)
+
+    assert brief.equity_curve.iloc[-1] == pytest.approx(0.999**4)
+    assert extended.equity_curve.iloc[-1] == pytest.approx(0.999**8)
+
+
+def test_shorting_is_free_by_default_so_older_results_still_reproduce():
+    """Every number in docs/baseline.md before 2026-08-09 assumed free borrow.
+
+    Defaulting the rate to anything else would silently restate them, so a
+    reader comparing a fresh run against the recorded table would see a
+    discrepancy with no cause written down anywhere.
+    """
+    bars, strategy = build({"A": [0.0] * 4}, {"A": 1.0}, signal=-1)
+    result = run_portfolio_backtest(bars, strategy, **_FREE)
+    assert result.equity_curve.iloc[-1] == pytest.approx(1.0)
