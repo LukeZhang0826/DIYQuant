@@ -49,7 +49,8 @@ execution discipline. The resume value here is the end-to-end pipeline engineeri
 src/diyquant/
   config.py          # pydantic-settings: .env + config/settings.yaml
   data/              # models (Bar, NewsItem), providers/ (yfinance, alpaca), store.py (parquet)
-  signals/           # base protocol; technical/ (SMA crossover); sentiment/ (FinBERT + gate)
+  signals/           # base protocol; technical/ (SMA crossover, momentum, reversal);
+                     # sentiment/ (FinBERT + gate). Only SMA is deployed: see docs/baseline.md
   backtest/          # engine.py (single ticker), portfolio.py + walkforward.py (validation)
   risk/              # limits.py (kill-switch), sizing.py, selection.py (which signals get funded),
                      # intraday.py (mid-session mark; observes only, never trades)
@@ -57,6 +58,7 @@ src/diyquant/
   alerts/            # discord.py: webhook heartbeat, never raises
   report/            # paging.py: row caps + the dashboard's client-side pager
 scripts/             # refresh_universe, backfill, run_backtest, run_live, score_news, report,
+                     # validate, ablate, compare_signals (is SMA the best signal? not yet shown),
                      # check_alerts (smoke-test the webhook), check_pulse (alert when not trading),
                      # cancel_pending_orders (withdraw resting orders you no longer want),
                      # monitor_intraday (mid-session mark + warning), clear_halt (resume after one)

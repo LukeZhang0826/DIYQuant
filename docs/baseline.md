@@ -190,6 +190,75 @@ deliberately keeps the alpha; going long-only trades it for market direction and
 contradicts the market-neutral thesis in `roadmap-vision.md`. The config is deliberately
 left unchanged on the strength of this table.
 
+## Is SMA crossover the best signal available? Measured 2026-08-08, answer: unproven
+
+`scripts/compare_signals.py` scores alternative signals through the same pipeline, so the
+only thing differing between rows is the rule deciding what to hold. Candidates were fixed
+before anything ran and chosen from published prior evidence, not by searching this data.
+Every row runs under the shipped volatility sizing, so the SMA row is +107.1% rather than
+the +93.3% flat-cap figure above.
+
+| Signal | Return | Excess | Sharpe | Beta | Alpha | MaxDD | Gross |
+|---|---|---|---|---|---|---|---|
+| **baseline** SMA 20/50 | +107.1% | -5.0% | 0.78 | -0.17 | +19.8% | -22.6% | 0.54 |
+| SMA, risk-adjusted ranking | +72.0% | -40.1% | 0.63 | +0.28 | +8.3% | -47.2% | 0.87 |
+| momentum 12-1 | +338.2% | +226.2% | 1.38 | +0.77 | +19.6% | -20.1% | 0.80 |
+| reversal 5d | -44.0% | -156.1% | -0.59 | +0.14 | -12.5% | -51.4% | 0.81 |
+
+**Nothing was promoted. The config still runs SMA 20/50.** Reasons, in order of how much
+they should be trusted:
+
+### Momentum's +226pp is one window
+
+Per-window, out-of-sample, momentum against SMA:
+
+| Test window | Benchmark | SMA | Momentum | Difference |
+|---|---|---|---|---|
+| 2021 | +32.6% | +8.2% | +2.8% | -5.4% |
+| 2022 | -10.1% | **+20.5%** | +4.2% | -16.3% |
+| 2023 | +21.7% | +11.7% | +29.1% | +17.4% |
+| 2024 | +23.4% | +7.4% | **+109.4%** | **+102.0%** |
+| 2025 | +18.4% | +32.5% | +51.4% | +18.9% |
+
+Three wins in five, with almost the entire margin in 2024. Remove that one year and
+momentum compounds to +109% against SMA's +93%: an edge of 16 percentage points, not 226.
+Momentum also **loses in the only falling market in the sample**, returning +4.2% in 2022
+where the SMA made +20.5% against a benchmark of -10.1%. Paying for a bull market by giving
+up the bear-year property is the opposite of what this project is trying to build.
+
+### And most of the rest is beta, not picking
+
+Absolute alpha is a tie (+19.6% vs +19.8%), but momentum deploys 48% more of the account to
+get it. Per unit of gross exposure that is **+24.5%/yr against the SMA's +36.7%/yr**, so the
+existing selection picks better per dollar at work. The extra return comes from carrying
++0.77 beta into a market that rose 112% instead of the SMA's -0.17. This is the long-only
+trap from the ablation table above, wearing a different hat.
+
+### The ranking metric was not the defect
+
+Worth recording because it was a confident prediction that turned out wrong. The ablation
+blamed `strength = |fast - slow| / slow` for shorting high-beta names by construction, so
+`SmaCrossover(rank_by="risk_adjusted")` divides that gap by realized volatility. It made
+everything worse: alpha halved, drawdown doubled to -47.2%, Sharpe fell. Preferring calm
+names means volatility sizing then gives them *larger* positions, so gross exposure rose to
+0.87 and carried the drawdown up with it. The ranking metric stays as it is.
+
+### Reversal is the control, and it failed as it should
+
+At -44.0% it confirms the harness is not simply rewarding whatever gets tested, which is the
+live risk when every other candidate is a trend follower.
+
+### What would actually settle this
+
+Five windows is too few to separate a real edge from a good year, and that is the binding
+constraint, not the choice of signal. `data.start` is 2018-01-01, which yields exactly five
+test windows. Extending history back would multiply them and is the cheapest real evidence
+available. Survivorship bias worsens the further back today's index membership is projected,
+so that caveat grows too, but more windows on a biased universe still beats five.
+
+Until then momentum is a **candidate, not an improvement**, and the code is kept
+(`signals/technical/momentum.py`, tested) so re-running it costs nothing.
+
 ## What this baseline does not cover
 
 - **The sentiment gate is not in it.** Nothing persists news, and yfinance serves

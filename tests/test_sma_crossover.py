@@ -62,3 +62,43 @@ def test_strength_is_scale_free():
 def test_flat_prices_have_no_conviction():
     bars = make_bars([100.0] * 60)
     assert SmaCrossover(fast=5, slow=20).strength(bars) == pytest.approx(0.0)
+
+
+def test_rank_by_defaults_to_the_shipped_gap_metric():
+    """Existing behaviour must be untouched unless rank_by is asked for."""
+    import numpy as np
+
+    idx = pd.date_range("2020-01-01", periods=120, freq="B")
+    data = pd.DataFrame({"close": np.linspace(100, 160, 120)}, index=idx)
+    assert SmaCrossover(fast=10, slow=30).rank_by == "gap"
+    assert SmaCrossover(fast=10, slow=30).strength(data) == SmaCrossover(
+        fast=10, slow=30, rank_by="gap"
+    ).strength(data)
+
+
+def test_risk_adjusted_ranking_does_not_change_entries():
+    """It reorders which names get funded, never which way any name is traded."""
+    import numpy as np
+
+    idx = pd.date_range("2020-01-01", periods=120, freq="B")
+    data = pd.DataFrame({"close": np.linspace(160, 100, 120)}, index=idx)
+    plain = SmaCrossover(fast=10, slow=30).generate(data)
+    adjusted = SmaCrossover(fast=10, slow=30, rank_by="risk_adjusted").generate(data)
+    pd.testing.assert_series_equal(plain, adjusted)
+
+
+def test_risk_adjusted_ranking_prefers_the_calmer_name():
+    import numpy as np
+
+    idx = pd.date_range("2020-01-01", periods=120, freq="B")
+    smooth = pd.DataFrame({"close": np.linspace(100, 160, 120)}, index=idx)
+    jagged = pd.DataFrame(
+        {"close": np.linspace(100, 160, 120) + np.tile([6.0, -6.0], 60)}, index=idx
+    )
+    strategy = SmaCrossover(fast=10, slow=30, rank_by="risk_adjusted", vol_lookback=20)
+    assert strategy.strength(smooth) > strategy.strength(jagged)
+
+
+def test_unknown_rank_by_raises():
+    with pytest.raises(ValueError):
+        SmaCrossover(fast=10, slow=30, rank_by="vibes")
